@@ -147,8 +147,8 @@ class AIAgent {
     }
 
     // Apply speed boost to ship
-    const baseStats = ShipStats[ship.shipClass];
-    if (baseStats) {
+    const baseStats = (typeof ShipStats !== 'undefined') ? ShipStats[ship.shipClass] : null;
+    if (baseStats && repSpeedBoost !== 1.0) {
       ship.speed = baseStats.speed * repSpeedBoost;
     }
 

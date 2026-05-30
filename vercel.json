@@ -2,7 +2,7 @@
   "cleanUrls": true,
   "buildCommand": null,
   "outputDirectory": ".",
-  "rebuildToken": "2026-05-28-21-00",
+  "rebuildToken": "2026-05-30-21-00",
   "headers": [
     {
       "source": "/(.*)",
