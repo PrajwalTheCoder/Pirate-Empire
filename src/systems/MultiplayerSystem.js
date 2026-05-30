@@ -1,0 +1,605 @@
+/**
+ * MultiplayerSystem — PeerJS WebRTC peer-to-peer networking.
+ *
+ * Roles:
+ *   HOST   — runs world simulation (AI, events, economy).
+ *            Broadcasts world state to client.
+ *   CLIENT — sends own ship inputs, receives world state.
+ *
+ * Message protocol (compact string codes to minimise bandwidth):
+ *   SS  — ShipState     (position, rotation, velocity)   @60Hz
+ *   CF  — CannonFire    (spawn cannonball on both ends)
+ *   DE  — DamageEvent   (authoritative hit from host)
+ *   PP  — PerkPickup    (orb collected)
+ *   PM  — PingMap       (map ping from partner)
+ *   FL  — Flare         (distress flare)
+ *   QC  — QuickChat     (radial message)
+ *   RQ  — RescueRequest (partner sinking, start timer)
+ *   RR  — RescueResolve (rescued / failed)
+ *   WE  — WorldEvent    (host→client world log message)
+ *   SY  — SyncWorld     (full world state snapshot on join)
+ */
+
+import EventEmitter from '../utils/EventEmitter.js';
+
+// ── Message type constants ────────────────────────────────────────────────────
+export const MSG = {
+  SHIP_STATE:      'SS',
+  CANNON_FIRE:     'CF',
+  DAMAGE_EVENT:    'DE',
+  PERK_PICKUP:     'PP',
+  PING_MAP:        'PM',
+  FLARE:           'FL',
+  QUICK_CHAT:      'QC',
+  RESCUE_REQUEST:  'RQ',
+  RESCUE_RESOLVE:  'RR',
+  WORLD_EVENT:     'WE',
+  SYNC_WORLD:      'SY',
+};
+
+// ── Quick-chat messages ───────────────────────────────────────────────────────
+export const QUICK_CHAT = [
+  { id: 0, icon: '⚓', text: 'With you!' },
+  { id: 1, icon: '🎯', text: 'Shoot that one!' },
+  { id: 2, icon: '🚨', text: "I'm in trouble!" },
+  { id: 3, icon: '💥', text: 'Nice shot!' },
+  { id: 4, icon: '⚠️', text: 'Retreat!' },
+  { id: 5, icon: '😂', text: 'Hahaha' },
+  { id: 6, icon: '🔥', text: "Let's go!" },
+  { id: 7, icon: '🗺️', text: 'Follow me!' },
+];
+
+// ── Sync rates ────────────────────────────────────────────────────────────────
+const SHIP_SYNC_RATE    = 1 / 20;   // 20Hz position sync (sufficient with dead reckoning)
+const WORLD_SYNC_RATE   = 5.0;      // Full world snapshot every 5 seconds
+
+export class MultiplayerSystem {
+  /**
+   * @param {string} role — 'HOST' | 'CLIENT'
+   * @param {string} [roomCode] — join code (CLIENT only)
+   */
+  constructor(role, roomCode = null) {
+    this.role       = role;    // 'HOST' or 'CLIENT'
+    this.roomCode   = roomCode;
+    this.isHost     = role === 'HOST';
+    this.isClient   = role === 'CLIENT';
+
+    this._peer      = null;   // PeerJS Peer instance
+    this._conn      = null;   // DataConnection to partner
+    this.connected  = false;
+
+    this._syncTimer      = 0;
+    this._worldSyncTimer = 0;
+
+    // Dead-reckoning state for partner ship
+    this.partnerState = {
+      x: 0, y: 1, z: 0,
+      rotY: 0,
+      vx: 0, vy: 0, vz: 0,
+      health: 100, maxHealth: 100,
+      faction: 'PLAYER',
+    };
+
+    // Rescue state
+    this._rescueTimer   = 0;
+    this._rescueActive  = false;
+
+    // Callbacks set by Game
+    this.onConnected        = null;   // () => void
+    this.onDisconnected     = null;   // () => void
+    this.onPartnerShipState = null;   // (state) => void
+    this.onCannonFire       = null;   // (data) => void
+    this.onDamageEvent      = null;   // (data) => void
+    this.onPerkPickup       = null;   // (data) => void
+    this.onPingMap          = null;   // (data) => void
+    this.onFlare            = null;   // () => void
+    this.onQuickChat        = null;   // (msgId) => void
+    this.onRescueRequest    = null;   // (timer) => void
+    this.onRescueResolve    = null;   // (success) => void
+    this.onWorldEvent       = null;   // (text) => void
+    this.onSyncWorld        = null;   // (snapshot) => void
+  }
+
+  // ── Init ───────────────────────────────────────────────────────────────────
+
+  /**
+   * Connect to PeerJS cloud and set up the Peer object.
+   * @param {function} [statusCallback] — optional (msg: string) => void for UI progress
+   * @returns {Promise<string>} roomCode
+   */
+  async init(statusCallback = null) {
+    this._statusCb = statusCallback;
+    await MultiplayerSystem._loadPeerJS();
+
+    // 1. Build optimal ICE server list (fresh Metered creds → DB creds → hardcoded)
+    this._reportStatus('🌐 Connecting to relay servers...');
+    const iceServers = await MultiplayerSystem._buildIceServers();
+    console.log(`[MP] Using ${iceServers.length} ICE servers (${iceServers.filter(s => s.username).length} TURN, ${iceServers.filter(s => !s.username).length} STUN)`);
+
+    return new Promise((resolve, reject) => {
+      const peerOptions = {
+        debug: 2,
+        config: {
+          iceServers,
+          iceCandidatePoolSize: 4,  // pre-gather candidates for faster connection
+        },
+      };
+
+      if (this.isHost) {
+        const code = MultiplayerSystem._generateCode();
+        this.roomCode = code;
+        this._peer = new window.Peer(code, peerOptions);
+
+        this._peer.on('open', () => {
+          this._reportStatus('✅ Relay connected — share your code!');
+          resolve(code);
+        });
+
+        this._peer.on('connection', (conn) => {
+          this._conn = conn;
+          this._setupConnection(conn);
+        });
+
+        this._peer.on('error', (err) => {
+          console.error('[MP] Host peer error:', err.type, err);
+          const msg = MultiplayerSystem._friendlyPeerError(err);
+          this._reportStatus(`❌ ${msg}`);
+          reject(new Error(msg));
+        });
+
+      } else {
+        // CLIENT — connect to host's peer ID (which is the room code)
+        this._peer = new window.Peer(undefined, peerOptions);
+
+        this._peer.on('open', () => {
+          this._reportStatus('🔗 Reaching your captain...');
+          const conn = this._peer.connect(this.roomCode, { reliable: true });
+          this._conn = conn;
+          this._setupConnection(conn);
+
+          // Monitor ICE state for better user feedback
+          const iceCheck = setInterval(() => {
+            const pc = conn.peerConnection;
+            if (!pc) return;
+            clearInterval(iceCheck);
+            pc.addEventListener('iceconnectionstatechange', () => {
+              const s = pc.iceConnectionState;
+              console.log('[MP] ICE state:', s);
+              if (s === 'checking')  this._reportStatus('🔍 Finding connection path...');
+              if (s === 'connected' || s === 'completed') this._reportStatus('✅ Relay path established!');
+              if (s === 'failed')    this._reportStatus('❌ Relay path failed — check your network');
+              if (s === 'disconnected') this._reportStatus('⚠️ Connection unstable...');
+            });
+          }, 100);
+
+          // 30 seconds — TURN relay gathering can take up to 15s on slow networks
+          const timeoutId = setTimeout(() => {
+            clearInterval(iceCheck);
+            conn.close();
+            reject(new Error(
+              'Timed out after 30s. Make sure your Captain is on the Host tab waiting, then try again.'
+            ));
+          }, 30000);
+
+          conn.on('open', () => {
+            clearInterval(iceCheck);
+            clearTimeout(timeoutId);
+            resolve(this.roomCode);
+          });
+          conn.on('error', (err) => {
+            clearInterval(iceCheck);
+            clearTimeout(timeoutId);
+            reject(new Error(MultiplayerSystem._friendlyPeerError(err)));
+          });
+          conn.on('close', () => {
+            clearInterval(iceCheck);
+            clearTimeout(timeoutId);
+            reject(new Error('Connection closed — host may have left the lobby. Ask them to refresh and re-host.'));
+          });
+        });
+
+        this._peer.on('error', (err) => {
+          console.error('[MP] Client peer error:', err.type, err);
+          const msg = MultiplayerSystem._friendlyPeerError(err);
+          this._reportStatus(`❌ ${msg}`);
+          reject(new Error(msg));
+        });
+      }
+    });
+  }
+
+  _reportStatus(msg) {
+    console.log('[MP]', msg);
+    if (typeof this._statusCb === 'function') this._statusCb(msg);
+  }
+
+  /** Map raw PeerJS error types to player-friendly messages. */
+  static _friendlyPeerError(err) {
+    switch (err?.type) {
+      case 'peer-unavailable':
+        return 'Captain not found — make sure they are on the Host tab and the code is correct.';
+      case 'disconnected':
+        return 'Lost connection to the relay — check your internet and try again.';
+      case 'network':
+        return 'Network error — you may be behind a very strict firewall.';
+      case 'unavailable-id':
+        return 'Room code conflict — host should refresh and re-host.';
+      case 'browser-incompatible':
+        return 'Your browser does not support WebRTC. Try Chrome or Firefox.';
+      case 'server-error':
+        return 'Relay server error — please try again in a moment.';
+      default:
+        return err?.message || 'Unknown connection error. Please try again.';
+    }
+  }
+
+  /**
+   * Build a minimal, fast ICE server list.
+   * Priority: 1) Metered REST API (fresh short-lived creds)
+   *           2) Static creds from Supabase DB
+   *           3) Hardcoded fallback
+   */
+  static async _buildIceServers() {
+    const stunOnly = [
+      { urls: 'stun:stun.l.google.com:19302' },
+      { urls: 'stun:stun1.l.google.com:19302' },
+      { urls: 'stun:stun.cloudflare.com:3478' },
+    ];
+
+    // Try to get fresh credentials from Metered REST API
+    try {
+      const { getTurnConfig } = await import('../utils/SupabaseClient.js');
+      const configs = await getTurnConfig();
+
+      if (!configs || configs.length === 0) throw new Error('No TURN config in DB');
+
+      // Deduplicate to one set of credentials (first entry wins)
+      const cred = configs.find(c => c.username && c.credential);
+      if (!cred) throw new Error('No valid TURN credentials in DB');
+
+      const { username, credential } = cred;
+      console.log('[MP] Using TURN credentials from DB. Username:', username);
+
+      // Minimal, effective TURN URL list — covers all NAT scenarios
+      // Ordered: fastest (UDP 3478) → firewall-bypass (TCP 443) → TLS (strict firewalls)
+      return [
+        ...stunOnly,
+        // Primary: UDP on 3478 — lowest latency
+        { urls: 'turn:global.relay.metered.ca:3478?transport=udp', username, credential },
+        // Fallback: TCP on 3478
+        { urls: 'turn:global.relay.metered.ca:3478?transport=tcp', username, credential },
+        // Firewall bypass: TCP on port 443 (looks like HTTPS traffic)
+        { urls: 'turn:global.relay.metered.ca:443?transport=tcp', username, credential },
+        // Strict firewall bypass: TLS on 443
+        { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username, credential },
+        // India regional relay (lower latency for Indian users)
+        { urls: 'turn:in.relay.metered.ca:3478?transport=udp', username, credential },
+        { urls: 'turn:in.relay.metered.ca:443?transport=tcp', username, credential },
+      ];
+    } catch (err) {
+      console.warn('[MP] Could not load TURN config from DB, using hardcoded fallback:', err.message);
+    }
+
+    // Last-resort hardcoded fallback — same credential as DB
+    const u = 'eca365ad7de349e8a584bba7';
+    const c = '375mIYZBz5LYCsyt';
+    return [
+      ...stunOnly,
+      { urls: 'turn:global.relay.metered.ca:3478?transport=udp', username: u, credential: c },
+      { urls: 'turn:global.relay.metered.ca:3478?transport=tcp', username: u, credential: c },
+      { urls: 'turn:global.relay.metered.ca:443?transport=tcp', username: u, credential: c },
+      { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: u, credential: c },
+      { urls: 'turn:in.relay.metered.ca:3478?transport=udp', username: u, credential: c },
+      { urls: 'turn:in.relay.metered.ca:443?transport=tcp', username: u, credential: c },
+    ];
+  }
+
+  // ── Connection setup ────────────────────────────────────────────────────────
+
+  _setupConnection(conn) {
+    // Intercept RTCPeerConnection to log detailed ICE errors
+    let checkCount = 0;
+    const checkPC = setInterval(() => {
+      checkCount++;
+      const pc = conn.peerConnection;
+      if (pc) {
+        clearInterval(checkPC);
+        console.log('[MP] WebRTC RTCPeerConnection intercepted successfully.');
+        
+        pc.addEventListener('icecandidateerror', (event) => {
+          console.warn('[MP] WebRTC ICE Candidate Error:', {
+            errorCode: event.errorCode,
+            errorText: event.errorText,
+            url: event.url
+          });
+        });
+
+        pc.addEventListener('iceconnectionstatechange', () => {
+          console.log('[MP] WebRTC ICE Connection State Changed:', pc.iceConnectionState);
+        });
+      } else if (checkCount > 50) {
+        clearInterval(checkPC);
+      }
+    }, 100);
+
+    conn.on('open', () => {
+      this.connected = true;
+      this.onConnected?.();
+      EventEmitter.emit('mp:connected');
+    });
+
+    conn.on('data', (raw) => {
+      this._handleMessage(raw);
+    });
+
+    conn.on('close', () => {
+      this.connected = false;
+      this.onDisconnected?.();
+      EventEmitter.emit('mp:disconnected');
+    });
+
+    conn.on('error', (err) => {
+      console.error('[MP] Connection error:', err);
+    });
+  }
+
+  // ── Message handling ───────────────────────────────────────────────────────
+
+  _handleMessage(raw) {
+    try {
+      const msg = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      switch (msg.t) {
+        case MSG.SHIP_STATE:
+          this.partnerState = msg.d;
+          this.onPartnerShipState?.(msg.d);
+          break;
+        case MSG.CANNON_FIRE:
+          this.onCannonFire?.(msg.d);
+          break;
+        case MSG.DAMAGE_EVENT:
+          this.onDamageEvent?.(msg.d);
+          break;
+        case MSG.PERK_PICKUP:
+          this.onPerkPickup?.(msg.d);
+          break;
+        case MSG.PING_MAP:
+          this.onPingMap?.(msg.d);
+          EventEmitter.emit('mp:ping', msg.d);
+          break;
+        case MSG.FLARE:
+          this.onFlare?.();
+          EventEmitter.emit('mp:flare', msg.d);
+          break;
+        case MSG.QUICK_CHAT:
+          this.onQuickChat?.(msg.d);
+          EventEmitter.emit('mp:quickchat', msg.d);
+          break;
+        case MSG.RESCUE_REQUEST:
+          this._rescueTimer  = msg.d.timer ?? 60;
+          this._rescueActive = true;
+          this.onRescueRequest?.(msg.d);
+          EventEmitter.emit('mp:rescue_request', msg.d);
+          break;
+        case MSG.RESCUE_RESOLVE:
+          this._rescueActive = false;
+          this.onRescueResolve?.(msg.d);
+          EventEmitter.emit('mp:rescue_resolve', msg.d);
+          break;
+        case MSG.WORLD_EVENT:
+          this.onWorldEvent?.(msg.d);
+          EventEmitter.emit('mp:world_event', msg.d);
+          break;
+        case MSG.SYNC_WORLD:
+          this.onSyncWorld?.(msg.d);
+          EventEmitter.emit('mp:sync_world', msg.d);
+          break;
+        default:
+          break;
+      }
+    } catch (e) {
+      console.warn('[MP] Bad message:', raw, e);
+    }
+  }
+
+  // ── Send helpers ───────────────────────────────────────────────────────────
+
+  _send(type, data) {
+    if (!this._conn || !this.connected) return;
+    try {
+      this._conn.send({ t: type, d: data });
+    } catch (e) {
+      // Ignore send errors on unreliable channel
+    }
+  }
+
+  /** Send own ship state to partner. */
+  sendShipState(ship) {
+    const p = ship.group.position;
+    const v = ship.velocity;
+    this._send(MSG.SHIP_STATE, {
+      x:   parseFloat(p.x.toFixed(2)),
+      y:   parseFloat(p.y.toFixed(2)),
+      z:   parseFloat(p.z.toFixed(2)),
+      ry:  parseFloat(ship.group.rotation.y.toFixed(3)),
+      vx:  parseFloat(v.x.toFixed(2)),
+      vy:  parseFloat(v.y.toFixed(2)),
+      vz:  parseFloat(v.z.toFixed(2)),
+      hp:  Math.round(ship.health),
+      mhp: Math.round(ship.maxHealth),
+      thx: parseFloat(ship.thrust.toFixed(2)),
+    });
+  }
+
+  /** Send cannon fire event. */
+  sendCannonFire(posL, velL, posR, velR, ammo) {
+    this._send(MSG.CANNON_FIRE, {
+      pL: { x: posL.x, y: posL.y, z: posL.z },
+      vL: { x: velL.x, y: velL.y, z: velL.z },
+      pR: { x: posR.x, y: posR.y, z: posR.z },
+      vR: { x: velR.x, y: velR.y, z: velR.z },
+      a: ammo,
+    });
+  }
+
+  /** Send a damage event (host-authoritative). */
+  sendDamageEvent(shipId, damage) {
+    this._send(MSG.DAMAGE_EVENT, { id: shipId, dmg: damage });
+  }
+
+  /** Send perk collected notification. */
+  sendPerkPickup(perkId) {
+    this._send(MSG.PERK_PICKUP, { id: perkId });
+  }
+
+  /** Send a map ping. */
+  sendPingMap(type, x, z) {
+    this._send(MSG.PING_MAP, { type, x: Math.round(x), z: Math.round(z) });
+  }
+
+  /** Send a distress flare. */
+  sendFlare(x, z) {
+    this._send(MSG.FLARE, { x: Math.round(x), z: Math.round(z) });
+  }
+
+  /** Send a quick-chat message. */
+  sendQuickChat(msgId) {
+    this._send(MSG.QUICK_CHAT, { id: msgId });
+  }
+
+  /** Send rescue request (partner ship sinking). */
+  sendRescueRequest(x, z, timer = 60) {
+    this._send(MSG.RESCUE_REQUEST, { x: Math.round(x), z: Math.round(z), timer });
+  }
+
+  /** Send rescue resolve (rescued or failed). */
+  sendRescueResolve(success) {
+    this._send(MSG.RESCUE_RESOLVE, { ok: success });
+    this._rescueActive = false;
+  }
+
+  /** Host → Client: world event text. */
+  sendWorldEvent(text) {
+    this._send(MSG.WORLD_EVENT, { text });
+  }
+
+  /** Host → Client: full world snapshot (economy, island states). */
+  sendWorldSnapshot(economy, islands) {
+    const snap = {
+      gold:    economy.resources.gold,
+      crew:    economy.resources.crew,
+      wood:    economy.resources.wood,
+      islands: islands.map(isl => ({
+        id:       isl.id,
+        captured: isl.captured,
+        owner:    isl.owner,
+        hp:       isl.hp,
+      })),
+    };
+    this._send(MSG.SYNC_WORLD, snap);
+  }
+
+  // ── Per-frame update ───────────────────────────────────────────────────────
+
+  /**
+   * Call every frame. Handles periodic ship sync and rescue timer.
+   * @param {number} delta
+   * @param {Ship} playerShip
+   * @param {EconomySystem} [economy]  — host only
+   * @param {Array} [islands]          — host only
+   */
+  update(delta, playerShip, economy = null, islands = null) {
+    if (!this.connected) return;
+
+    // ── Ship state sync ──────────────────────────────────────────────────────
+    this._syncTimer -= delta;
+    if (this._syncTimer <= 0) {
+      this._syncTimer = SHIP_SYNC_RATE;
+      if (playerShip?.isAlive) {
+        this.sendShipState(playerShip);
+      }
+    }
+
+    // ── Host: world snapshot ─────────────────────────────────────────────────
+    if (this.isHost && economy && islands) {
+      this._worldSyncTimer -= delta;
+      if (this._worldSyncTimer <= 0) {
+        this._worldSyncTimer = WORLD_SYNC_RATE;
+        this.sendWorldSnapshot(economy, islands);
+      }
+    }
+
+    // ── Rescue countdown ─────────────────────────────────────────────────────
+    if (this._rescueActive) {
+      this._rescueTimer -= delta;
+      EventEmitter.emit('mp:rescue_tick', { timer: this._rescueTimer });
+      if (this._rescueTimer <= 0) {
+        this._rescueActive = false;
+        EventEmitter.emit('mp:rescue_failed');
+      }
+    }
+  }
+
+  // ── Helpers ─────────────────────────────────────────────────────────────────
+
+  /** Dead-reckoning: interpolate partner ship position forward. */
+  getInterpolatedPartnerState(delta) {
+    const s = this.partnerState;
+    return {
+      x:  s.x  + s.vx * delta,
+      y:  s.y,
+      z:  s.z  + s.vz * delta,
+      ry: s.ry,
+      hp: s.hp,
+      mhp: s.mhp,
+    };
+  }
+
+  disconnect() {
+    this._conn?.close();
+    this._peer?.destroy();
+    this.connected = false;
+  }
+
+  /**
+   * @deprecated Use _buildIceServers() instead.
+   * Kept as a thin wrapper in case anything still calls it.
+   */
+  static _normalizeIceServers(serversList) {
+    if (!serversList || serversList.length === 0) return [];
+    const cred = serversList.find(s => s.username && s.credential);
+    if (!cred) return [];
+    const { username, credential } = cred;
+    return [
+      { urls: 'turn:global.relay.metered.ca:3478?transport=udp', username, credential },
+      { urls: 'turn:global.relay.metered.ca:3478?transport=tcp', username, credential },
+      { urls: 'turn:global.relay.metered.ca:443?transport=tcp', username, credential },
+      { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username, credential },
+    ];
+  }
+
+  // ── Static helpers ────────────────────────────────────────────────────────
+
+  /** Load PeerJS from CDN if not already present. */
+  static _loadPeerJS() {
+    if (window.Peer) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+      script.onload  = resolve;
+      script.onerror = reject;
+      document.head.appendChild(script);
+    });
+  }
+
+  /** Generate a human-readable 6-character room code. */
+  static _generateCode() {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 6; i++) {
+      code += chars[Math.floor(Math.random() * chars.length)];
+    }
+    return code;
+  }
+}
+
+export default MultiplayerSystem;

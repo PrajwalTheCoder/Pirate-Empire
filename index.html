@@ -1,0 +1,760 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pirate Empire: Rise of the Black Fleet</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x2620;</text></svg>" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=MedievalSharp&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="style.css" />
+
+  <!-- Three.js importmap — no build tools required -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "@supabase/supabase-js": "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm"
+      }
+    }
+  </script>
+
+  <!-- Vercel Web Analytics -->
+  <script>
+    window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+  </script>
+  <script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+
+  <div id="canvas-container"></div>
+  <div id="fps-counter" class="fps-counter-overlay">FPS: --</div>
+
+  <!-- ═══════════════════════════════════════════════════       MAIN MENU OVERLAY
+  ═══════════════════════════════════════════════════════ -->
+  <div id="main-menu" class="hidden">
+    <!-- Live 3-D ocean renders behind this overlay -->
+    <div class="mm-backdrop"></div>
+
+    <div class="mm-content">
+      <!-- Title -->
+      <div class="mm-skull">☠</div>
+      <h1 class="mm-title">PIRATE EMPIRE</h1>
+      <p  class="mm-sub">Rise of the Black Fleet</p>
+
+      <!-- Name Input -->
+      <div class="mm-name-input-group">
+        <label class="mm-name-label" for="mm-player-name">🏴‍☠️ Pirate Name:</label>
+        <div class="mm-name-input-row">
+          <input type="text" id="mm-player-name" placeholder="Captain Jack" maxlength="15" autocomplete="off" spellcheck="false" />
+          <button id="mm-save-name" class="mm-btn-save" disabled>⚓ Save</button>
+        </div>
+        <div id="mm-name-status" class="mm-name-status"></div>
+      </div>
+
+      <!-- Nav buttons -->
+      <nav class="mm-nav">
+        <button class="mm-btn mm-btn-story" id="mm-story">☠️ &nbsp;Story Mode</button>
+        <button class="mm-btn mm-btn-play" id="mm-play">⚓ &nbsp;Solo Voyage</button>
+        <button class="mm-btn mm-btn-coop" id="mm-coop">🤝 &nbsp;Co-op Mode</button>
+        <button class="mm-btn" id="mm-leaderboard">🏆 &nbsp;Leaderboard</button>
+        <button class="mm-btn" id="mm-settings">⚙️ &nbsp;Settings</button>
+        <button class="mm-btn" id="mm-credits">📜 &nbsp;Credits</button>
+      </nav>
+    </div>
+
+    <!-- ── Settings panel (hidden by default) ────────────────────────── -->
+    <div class="mm-panel hidden" id="mm-settings-panel">
+      <button class="mm-panel-close" id="mm-close-settings">✕</button>
+      <h2 class="mm-panel-title">⚙️ Settings</h2>
+
+      <div class="mm-setting-row">
+        <label>Master Volume</label>
+        <input type="range" id="s-master" min="0" max="100" value="80" />
+        <span class="mm-val" id="sv-master">80</span>
+      </div>
+      <div class="mm-setting-row">
+        <label>Music Volume</label>
+        <input type="range" id="s-music" min="0" max="100" value="60" />
+        <span class="mm-val" id="sv-music">60</span>
+      </div>
+      <div class="mm-setting-row">
+        <label>SFX Volume</label>
+        <input type="range" id="s-sfx" min="0" max="100" value="80" />
+        <span class="mm-val" id="sv-sfx">80</span>
+      </div>
+      <div class="mm-setting-row">
+        <label>Graphics Quality</label>
+        <select id="s-quality">
+          <option value="low">Low</option>
+          <option value="medium" selected>Medium</option>
+          <option value="high">High</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- ── Credits panel (hidden by default) ─────────────────────────── -->
+    <div class="mm-panel hidden" id="mm-credits-panel">
+      <button class="mm-panel-close" id="mm-close-credits">✕</button>
+      <h2 class="mm-panel-title">📜 Credits</h2>
+      <div class="mm-credits-body">
+        <p class="mm-credit-line">☠️ Game by <strong>Prajwal Mhatre</strong></p>
+        <p class="mm-credit-line">🌊 Built with <strong>Three.js r169</strong></p>
+        <p class="mm-credit-line">⛰️ 3-D Assets: <strong>Kenney Pirate Kit</strong></p>
+        <p class="mm-credit-line">🎨 UI Font: <strong>Pirata One (Google Fonts)</strong></p>
+        <p class="mm-credit-line mm-credit-tagline">
+          “Every legend begins with a single voyage.”
+        </p>
+      </div>
+    </div>
+
+    <!-- ── Co-op Lobby Panel ────────────────────────────────────────── -->
+    <div class="mm-panel hidden" id="mm-coop-panel">
+      <button class="mm-panel-close" id="mm-close-coop">✕</button>
+      <h2 class="mm-panel-title">🤝 Co-op Mode</h2>
+      <p class="coop-subtitle">Play with a friend online — free, no account needed</p>
+
+      <!-- Host / Join selector -->
+      <div class="coop-mode-tabs">
+        <button class="coop-tab active" id="coop-tab-host" data-tab="host">⚓ Host Game</button>
+        <button class="coop-tab" id="coop-tab-join" data-tab="join">🔗 Join Game</button>
+      </div>
+
+      <!-- HOST pane -->
+      <div class="coop-pane" id="coop-pane-host">
+        <p class="coop-hint">Share this code with your first mate:</p>
+        <div class="coop-code-display" id="coop-room-code">------</div>
+        <div class="coop-status" id="coop-host-status">Connecting to relay...</div>
+        <div class="coop-waiting" id="coop-waiting-indicator">
+          <div class="coop-waiting-dot"></div>
+          <div class="coop-waiting-dot"></div>
+          <div class="coop-waiting-dot"></div>
+          <span>Waiting for first mate...</span>
+        </div>
+        <button class="mm-btn mm-btn-play" id="coop-host-start" style="margin-top:12px;display:none">▶ &nbsp;Set Sail!</button>
+      </div>
+
+      <!-- JOIN pane -->
+      <div class="coop-pane hidden" id="coop-pane-join">
+        <p class="coop-hint">Enter your captain's room code:</p>
+        <input class="coop-code-input" id="coop-join-input" type="text"
+               placeholder="e.g. PX7K2M" maxlength="6" autocomplete="off"
+               spellcheck="false" />
+        <button class="mm-btn mm-btn-play" id="coop-join-btn" style="margin-top:14px;">🔗 &nbsp;Join Ship</button>
+        <div class="coop-status" id="coop-join-status"></div>
+      </div>
+    </div>
+
+    <!-- ── Leaderboard panel (hidden by default) ────────────────────────── -->
+    <div class="mm-panel hidden" id="mm-leaderboard-panel">
+      <button class="mm-panel-close" id="mm-close-leaderboard">✕</button>
+      <h2 class="mm-panel-title">🏆 Leaderboard</h2>
+      <div class="leaderboard-body">
+        <div id="leaderboard-loading" class="leaderboard-loading">Loading high scores...</div>
+        <div id="leaderboard-container" class="leaderboard-container hidden">
+          <table class="leaderboard-table">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Captain</th>
+                <th>Result</th>
+                <th>Score</th>
+                <th>Gold</th>
+                <th>Kills</th>
+                <th>Islands</th>
+                <th>Fleet</th>
+                <th>Treasures</th>
+                <th>Boss</th>
+                <th>Time</th>
+              </tr>
+            </thead>
+            <tbody id="leaderboard-rows">
+              <!-- Injected by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- version badge shown on menu -->
+  <div class="mm-version" id="mm-version">v1.0 &nbsp;·&nbsp; Three.js r169</div>
+
+  <!-- ═══════════════════════════════════════════════════
+       HUD — Top Bar
+  ═══════════════════════════════════════════════════ -->
+  <div id="hud">
+    <div class="hud-section" id="hud-left">
+      <div class="hud-title">⚓ PIRATE EMPIRE</div>
+    </div>
+    <div class="hud-section" id="hud-center">
+      <div class="resource-item" id="hud-gold">
+        <span class="resource-icon">🪙</span>
+        <span class="resource-label">Gold</span>
+        <span class="resource-value" id="gold-value">0</span>
+      </div>
+      <div class="resource-item" id="hud-crew">
+        <span class="resource-icon">👥</span>
+        <span class="resource-label">Crew</span>
+        <span class="resource-value" id="crew-value">0</span>
+      </div>
+      <div class="resource-item" id="hud-wood">
+        <span class="resource-icon">🪵</span>
+        <span class="resource-label">Wood</span>
+        <span class="resource-value" id="wood-value">0</span>
+      </div>
+      <div class="resource-item" id="hud-fleet">
+        <span class="resource-icon">🚢</span>
+        <span class="resource-label">Fleet</span>
+        <span class="resource-value" id="fleet-value">1</span>
+      </div>
+      <div class="resource-item" id="hud-islands">
+        <span class="resource-icon">🏝️</span>
+        <span class="resource-label">Islands</span>
+        <span class="resource-value" id="islands-value">0</span>
+      </div>
+      <div class="resource-item" id="hud-wind" title="Wind direction">
+        <span class="resource-icon">🌬️</span>
+        <span class="resource-label">Wind</span>
+        <span class="resource-value" id="wind-arrow" style="display:inline-block; transition: transform 0.2s; transform-origin: center;">➔</span>
+      </div>
+    </div>
+    <div class="hud-section" id="hud-right">
+      <div id="ship-health-bar-container">
+        <div class="health-label">⚔ HULL</div>
+        <div class="health-track">
+          <div class="health-fill" id="player-health-fill"></div>
+        </div>
+        <span class="health-text" id="player-health-text">100 / 100</span>
+      </div>
+      <!-- Cannon reload arc: fills as cannon cools down -->
+      <div id="cannon-reload" title="Cannon reload">
+        <svg width="44" height="44" viewBox="0 0 44 44">
+          <circle cx="22" cy="22" r="16" fill="none" stroke="#333" stroke-width="3"/>
+          <circle id="reload-arc" cx="22" cy="22" r="16"
+            fill="none" stroke="#f0c040" stroke-width="3"
+            stroke-dasharray="100.5" stroke-dashoffset="0"
+            stroke-linecap="round"
+            transform="rotate(-90 22 22)"/>
+        </svg>
+        <span id="reload-icon" style="position:absolute;font-size:12px;top:50%;left:50%;transform:translate(-50%,-50%);">💣</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       INTERACTION PROMPT (center-bottom)
+  ═══════════════════════════════════════════════════ -->
+  <div id="prompt" class="hidden">
+    <span id="prompt-text">Press E to Capture Island</span>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       BOTTOM PANEL — Tabs
+  ═══════════════════════════════════════════════════ -->
+  <div id="bottom-panel">
+    <div id="tab-buttons">
+      <button class="tab-btn active" data-tab="fleet">⚓ Fleet</button>
+      <button class="tab-btn" data-tab="build">🏗️ Build</button>
+      <button class="tab-btn" data-tab="attack">⚔️ Attack</button>
+      <button class="tab-btn" data-tab="upgrades">⬆️ Upgrades</button>
+      <button class="tab-btn" data-tab="map">🗺️ Map</button>
+    </div>
+    <div id="tab-content">
+      <!-- content injected by UIPanel.js -->
+      <div id="tab-fleet" class="tab-pane active"></div>
+      <div id="tab-build" class="tab-pane"></div>
+      <div id="tab-attack" class="tab-pane"></div>
+      <div id="tab-upgrades" class="tab-pane"></div>
+      <div id="tab-map" class="tab-pane"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       RIGHT PANEL — Missions
+  ═══════════════════════════════════════════════════ -->
+  <div id="right-panel">
+    <div class="panel-title">📜 Missions</div>
+    <div id="mission-list">
+      <!-- injected by MissionUI.js -->
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       MINIMAP (bottom-right corner)
+  ═══════════════════════════════════════════════════ -->
+  <div id="minimap-container">
+    <div class="minimap-title">⚓ Chart</div>
+    <canvas id="minimap" width="180" height="180"></canvas>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CONTROLS HINT
+  ═══════════════════════════════════════════════════ -->
+  <div id="controls-hint">
+    W/A/D — Sail &nbsp;|  LMB/SPACE — Aim &amp; Fire &nbsp;|  E — Interact &nbsp;|  B — Board &nbsp;|  R — Repair &nbsp;|  Q — Anchor &nbsp;|  J — Journal &nbsp;|
+    <span id="coop-hint-extra" style="display:none"> G — Ping &nbsp;|  F — Flare &nbsp;|  Z — Chat &nbsp;| </span>
+    ESC — Pause
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       BOSS HEALTH BAR
+  ═══════════════════════════════════════════════════ -->
+  <div id="boss-bar" class="hidden">
+    <div class="boss-bar-label">💀 PIRATE HUNTER</div>
+    <div class="boss-bar-track">
+      <div class="boss-bar-fill" id="boss-bar-fill"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       LOADING SCREEN
+  ═══════════════════════════════════════════════════ -->
+  <div id="loading-screen">
+    <div class="loading-content">
+      <div class="skull-logo">☠</div>
+      <h1 class="loading-title">PIRATE EMPIRE</h1>
+      <h2 class="loading-subtitle">Rise of the Black Fleet</h2>
+      <div class="loading-bar-track">
+        <div class="loading-bar-fill" id="loading-bar-fill"></div>
+      </div>
+      <div class="loading-text" id="loading-text">Summoning the seas...</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════       GAME OVER OVERLAY
+  ═══════════════════════════════════════════════════════ -->
+  <div id="game-over-overlay" class="hidden">
+    <div class="game-over-content">
+      <div class="game-over-skull">☠</div>
+      <h1 class="game-over-title">GAME OVER</h1>
+      <p class="game-over-sub">Your ship has been sent to Davy Jones' Locker</p>
+
+      <div class="game-over-stats">
+        <div class="go-stat-row">
+          <span class="go-stat-label">⏱️ Time Survived</span>
+          <span class="go-stat-value" id="go-time">0m 0s</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">⚔️ Ships Destroyed</span>
+          <span class="go-stat-value" id="go-kills">0</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">🪙 Gold Collected</span>
+          <span class="go-stat-value" id="go-gold">0</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">🏕️ Islands Captured</span>
+          <span class="go-stat-value" id="go-islands">0</span>
+        </div>
+      </div>
+
+      <div class="game-over-leaderboard">
+        <h3 class="go-lb-title">🏆 High Scores</h3>
+        <div id="go-leaderboard-loading" class="go-lb-loading">Submitting your score...</div>
+        <div id="go-leaderboard-container" class="go-lb-container hidden">
+          <table class="leaderboard-table compact">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Captain</th>
+                <th>Result</th>
+                <th>Score</th>
+                <th>Gold</th>
+                <th>Kills</th>
+              </tr>
+            </thead>
+            <tbody id="go-leaderboard-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="game-over-btns">
+        <button class="go-btn go-btn-primary" id="btn-restart">⚓ Sail Again</button>
+      </div>
+    </div>
+  </div>
+  <!-- ═══════════════════════════════════════════════════════       VICTORY OVERLAY
+  ═════════════════════════════════════════════════════ -->
+  <div id="victory-overlay" class="hidden" style="position:fixed;inset:0;background:rgba(10,40,10,0.88);display:flex;align-items:center;justify-content:center;z-index:9000;">
+    <div class="game-over-content" style="background:linear-gradient(160deg,#0c2a0c,#1a4a1a);border-color:#40c040;">
+      <div class="game-over-skull" style="font-size:3.5rem">👑</div>
+      <h1 class="game-over-title" style="color:#60ff60">VICTORY!</h1>
+      <p class="game-over-sub">You rule the Caribbean Seas, Pirate King!</p>
+      <div class="game-over-stats">
+        <div class="go-stat-row">
+          <span class="go-stat-label">⏱️ Time Played</span>
+          <span class="go-stat-value" id="v-time">0m 0s</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">⚔️ Ships Sunk</span>
+          <span class="go-stat-value" id="v-kills">0</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">🪙 Final Gold</span>
+          <span class="go-stat-value" id="v-gold">0</span>
+        </div>
+        <div class="go-stat-row">
+          <span class="go-stat-label">🏕️ Islands Held</span>
+          <span class="go-stat-value" id="v-islands">0</span>
+        </div>
+      </div>
+
+      <div class="game-over-leaderboard">
+        <h3 class="go-lb-title" style="color:#60ff60">🏆 High Scores</h3>
+        <div id="v-leaderboard-loading" class="go-lb-loading">Submitting your score...</div>
+        <div id="v-leaderboard-container" class="go-lb-container hidden">
+          <table class="leaderboard-table compact">
+            <thead>
+              <tr>
+                <th>Rank</th>
+                <th>Captain</th>
+                <th>Result</th>
+                <th>Score</th>
+                <th>Gold</th>
+                <th>Kills</th>
+              </tr>
+            </thead>
+            <tbody id="v-leaderboard-rows"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="game-over-btns">
+        <button class="go-btn go-btn-primary" id="btn-victory-restart">⚓ Sail Again</button>
+      </div>
+    </div>
+  </div>
+  <!-- ═══════════════════════════════════════════════════
+       PAUSE OVERLAY
+  ═══════════════════════════════════════════════════ -->
+  <div id="pause-overlay" class="hidden">
+    <div class="pause-content">
+      <div class="pause-skull">☣</div>
+      <h2 class="pause-title">PAUSED</h2>
+      <p class="pause-hint">Press ESC to resume</p>
+      <button class="pause-btn" id="btn-resume">▶ Resume</button>
+      <button class="pause-btn" id="btn-quit" style="margin-top:10px;background:#6b2020;">⚓ Quit to Menu</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════════       NOTIFICATION TOAST
+  ═══════════════════════════════════════════════════ -->
+  <div id="toast-container"></div>
+
+  <!-- ═══════════════════════════════════════════════════
+       WORLD LOG TICKER (co-op + singleplayer)
+  ═══════════════════════════════════════════════════ -->
+  <div id="world-log-ticker" class="hidden">
+    <span class="world-log-icon">📻</span>
+    <span id="world-log-text">All quiet on the ocean...</span>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CO-OP IN-GAME HUD
+  ═══════════════════════════════════════════════════ -->
+
+  <!-- Partner ship status (top-right) -->
+  <div id="coop-partner-hud" class="hidden">
+    <div class="coop-partner-header">
+      <span class="coop-partner-icon">🏴‍☠</span>
+      <span class="coop-partner-name" id="coop-partner-name">First Mate</span>
+      <span class="coop-partner-online" id="coop-partner-online">● Online</span>
+    </div>
+    <div class="coop-partner-hp-row">
+      <span class="coop-partner-hp-label">⚔ HULL</span>
+      <div class="coop-partner-hp-track">
+        <div class="coop-partner-hp-fill" id="coop-partner-hp-fill"></div>
+      </div>
+      <span class="coop-partner-hp-text" id="coop-partner-hp-text">100/100</span>
+    </div>
+    <div class="coop-partner-dist" id="coop-partner-dist">⚓ Nearby</div>
+  </div>
+
+  <!-- Rescue timer overlay -->
+  <div id="coop-rescue-overlay" class="hidden">
+    <div class="rescue-content">
+      <div class="rescue-icon">🚨</div>
+      <div class="rescue-title">FIRST MATE IS SINKING!</div>
+      <div class="rescue-timer" id="rescue-timer-text">60</div>
+      <div class="rescue-hint">Sail to them to rescue!</div>
+      <div class="rescue-bar-track">
+        <div class="rescue-bar-fill" id="rescue-bar-fill"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Quick-chat radial -->
+  <div id="quick-chat-radial" class="hidden">
+    <div class="qc-title">Quick Chat  <kbd>Z</kbd></div>
+    <div class="qc-grid" id="qc-grid">
+      <!-- injected by MultiplayerUI -->
+    </div>
+  </div>
+
+  <!-- Map ping indicator (shows on minimap area) -->
+  <div id="mp-ping-indicator" class="hidden">
+    <span id="mp-ping-text">📍 Partner pinged!</span>
+  </div>
+
+  <!-- Distress flare button -->
+  <button id="coop-flare-btn" class="hidden" title="Send Distress Flare (F)">
+    🚨
+  </button>
+
+
+  <!-- ═══════════════════════════════════════════════════
+       LEGENDARY CAPTAIN DIALOGUE POPUP
+  ═══════════════════════════════════════════════════ -->
+  <div id="legendary-dialogue" class="hidden">
+    <div class="legend-inner">
+      <div class="legend-skull">💀</div>
+      <div class="legend-name" id="legend-name">Ironjaw McGee</div>
+      <div class="legend-title" id="legend-title">The Iron Pirate</div>
+      <div class="legend-anger" id="legend-anger"></div>
+      <div class="legend-quote" id="legend-quote">"I remember you, sailor."</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CAPTAIN REPUTATION PILL (bottom-left)
+  ═══════════════════════════════════════════════════ -->
+  <div id="reputation-hud" class="hidden">
+    <span class="rep-icon">⚓</span>
+    <div class="rep-content">
+      <div class="rep-title" id="rep-title">Unknown Sailor</div>
+      <div class="rep-bar-track">
+        <div class="rep-bar-fill" id="rep-bar-fill"></div>
+      </div>
+    </div>
+    <span class="rep-score" id="rep-score">0</span>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CINEMATIC DIALOGUE OVERLAY
+  ═══════════════════════════════════════════════════ -->
+  <div id="dialogue-overlay" class="dialogue-overlay hidden">
+    <!-- Atmospheric scanline overlay -->
+    <div class="dialogue-scanlines"></div>
+
+    <!-- Transmission label -->
+    <div class="dialogue-transmission" id="dialogue-transmission-label">📻 INCOMING TRANSMISSION</div>
+
+    <!-- Main dialogue panel -->
+    <div class="dialogue-panel">
+      <!-- Vintage radio controls (left decorative deck) -->
+      <div class="dialogue-radio-deck deck-left">
+        <div class="radio-knob"></div>
+        <div class="radio-knob small"></div>
+        <div class="radio-frequency-label">FREQ: 154.2</div>
+      </div>
+
+      <!-- Left: Portrait -->
+      <div class="dialogue-portrait-frame">
+        <img id="dialogue-portrait" class="dialogue-portrait-img"
+             src="src/Pirate1.jpeg"
+             alt="Captain Portrait"
+             onerror="this.style.display='none'; this.parentElement.innerHTML='<div class=dialogue-portrait-fallback>☠</div>';" />
+        <div class="dialogue-portrait-glow"></div>
+        <!-- Voice-modulated lighting bars (LEDs) -->
+        <div class="dialogue-voice-bars">
+          <div class="voice-led" id="voice-led-1"></div>
+          <div class="voice-led" id="voice-led-2"></div>
+          <div class="voice-led" id="voice-led-3"></div>
+          <div class="voice-led" id="voice-led-4"></div>
+          <div class="voice-led" id="voice-led-5"></div>
+        </div>
+      </div>
+
+      <!-- Right: Text content -->
+      <div class="dialogue-content">
+        <div class="dialogue-header">
+          <div class="dialogue-header-left">
+            <span class="dialogue-speaker-name" id="dialogue-speaker-name">Old Cass</span>
+            <span class="dialogue-speaker-title" id="dialogue-speaker-title">Veteran Pirate Captain</span>
+          </div>
+          <!-- Oscilloscope container in header -->
+          <div class="dialogue-oscilloscope">
+            <svg viewBox="0 0 100 20" width="100" height="20">
+              <path id="oscilloscope-path" d="M 0 10 L 100 10" fill="none" stroke="var(--dialogue-border)" stroke-width="1.5" />
+            </svg>
+          </div>
+        </div>
+        <div class="dialogue-text-wrapper">
+          <p class="dialogue-text" id="dialogue-text"></p>
+          <span class="dialogue-cursor">▍</span>
+        </div>
+
+        <!-- Choice selection panel overlay -->
+        <div id="dialogue-choices" class="dialogue-choices hidden">
+          <!-- Dynamically injected choice buttons -->
+        </div>
+
+        <div class="dialogue-footer">
+          <span class="dialogue-skip-hint" id="dialogue-skip-hint">[ Click to skip ]</span>
+          <div class="dialogue-progress-track">
+            <div class="dialogue-progress" id="dialogue-progress"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Vintage radio controls (right decorative deck) -->
+      <div class="dialogue-radio-deck deck-right">
+        <div class="radio-knob"></div>
+        <div class="radio-tuning-indicator">SIGNAL OK</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       ACT BANNER (cinematic act title)
+  ═══════════════════════════════════════════════════ -->
+  <div id="act-banner" class="act-banner hidden">
+    <div class="act-banner-inner">
+      <div class="act-banner-line act-banner-line-top"></div>
+      <div class="act-banner-title" id="act-banner-title">ACT I</div>
+      <div class="act-banner-subtitle" id="act-banner-subtitle">BLOOD ON THE TIDE</div>
+      <div class="act-banner-line act-banner-line-bottom"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       BLOOD MOON OVERLAY (atmospheric)
+  ═══════════════════════════════════════════════════ -->
+  <div id="blood-moon-overlay" class="blood-moon-overlay hidden"></div>
+
+  <!-- ═══════════════════════════════════════════════════
+       STORY FACTION REPUTATION HUD (in-game, small widget)
+  ═══════════════════════════════════════════════════ -->
+  <div id="story-rep-hud" class="story-rep-hud hidden">
+    <div class="story-rep-tier" id="story-rep-tier">Unknown Sailor</div>
+    <div class="story-rep-kills" id="story-rep-kills">⚔ 0 ships sunk</div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       MISSION OBJECTIVE BAR (Story Mode only)
+  ═══════════════════════════════════════════════════ -->
+  <div id="story-objective-bar" class="story-objective-bar hidden">
+    <div class="obj-act-badge" id="obj-act-badge">ACT I</div>
+    <div class="obj-content">
+      <div class="obj-label">🎯 OBJECTIVE</div>
+      <div class="obj-text" id="obj-text">Set sail — explore the Shattered Seas</div>
+      <div class="obj-progress-track">
+        <div class="obj-progress-fill" id="obj-progress-fill" style="width:0%"></div>
+      </div>
+      <div class="obj-progress-label" id="obj-progress-label"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       STORY WAYPOINT COMPASS (appears when a map target is active)
+  ═══════════════════════════════════════════════════ -->
+  <div id="story-waypoint-compass" class="story-waypoint-compass hidden">
+    <div class="waypoint-arrow" id="waypoint-arrow">▲</div>
+    <div class="waypoint-label" id="waypoint-label">Wreck Site</div>
+    <div class="waypoint-dist" id="waypoint-dist"></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       RESUME CAMPAIGN MODAL (shown to returning story players)
+  ═══════════════════════════════════════════════════ -->
+  <div id="story-resume-modal" class="story-resume-modal hidden">
+    <div class="resume-card">
+      <div class="resume-skull">⚓</div>
+      <h2 class="resume-title">Continue Your Voyage?</h2>
+      <div class="resume-act-info" id="resume-act-info">
+        <span class="resume-act-label" id="resume-act-label">ACT I — BLOOD ON THE TIDE</span>
+      </div>
+      <div class="resume-stats">
+        <div class="resume-stat"><span class="rst-icon">⚔️</span><span id="resume-kills">0</span> ships sunk</div>
+        <div class="resume-stat"><span class="rst-icon">🏝️</span><span id="resume-captures">0</span> islands held</div>
+        <div class="resume-stat"><span class="rst-icon">🏴‍☠️</span><span id="resume-rep">Unknown Sailor</span></div>
+      </div>
+      <div class="resume-act-dots" id="resume-act-dots"></div>
+      <div class="resume-btns">
+        <button class="resume-btn resume-btn-continue" id="resume-continue-btn">⚓ Continue Campaign</button>
+        <button class="resume-btn resume-btn-new" id="resume-new-btn">🗡️ New Story</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CINEMATIC INTRO CRAWL (shown on starting a new story)
+  ═══════════════════════════════════════════════════ -->
+  <div id="story-intro-crawl" class="story-intro-crawl hidden">
+    <div class="intro-crawl-content">
+      <div class="intro-crawl-title">THE SHATTERED SEAS</div>
+      <div class="intro-crawl-subtitle">Year of the Black Tide — 1698</div>
+      <div class="intro-crawl-divider"></div>
+      <p class="intro-crawl-line">A lone captain sets sail into the mist...</p>
+      <p class="intro-crawl-line">The Navy tightens its iron grip on the trade lanes.</p>
+      <p class="intro-crawl-line">The pirate Brotherhood whispers of a Concordat Charter.</p>
+      <p class="intro-crawl-line">And in the deep, a dark fleet begins to rise.</p>
+      <div class="intro-crawl-skip">Press any key to skip</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       CAPTAIN'S JOURNAL MODAL (Key: J)
+  ═══════════════════════════════════════════════════ -->
+  <div id="captains-journal" class="journal-overlay hidden">
+    <div class="journal-book">
+      <button class="journal-close-btn" id="journal-close-btn">×</button>
+      <div class="journal-header">
+        <h2 class="journal-title">⚓ Captain's Logbook</h2>
+        <div class="journal-tabs">
+          <button class="journal-tab-btn active" data-jtab="logbook">📖 Logbook</button>
+          <button class="journal-tab-btn" data-jtab="logs">📻 Radio Logs</button>
+          <button class="journal-tab-btn" data-jtab="diplomacy">🏴‍☠️ Diplomacy</button>
+        </div>
+      </div>
+      <div class="journal-body">
+        <!-- Logbook Tab -->
+        <div class="journal-pane active" id="jpane-logbook">
+          <div class="journal-section">
+            <h3 class="jsection-title">Current Voyage Progress</h3>
+            <div id="journal-act-indicator" class="journal-act-indicator">
+              <!-- Act title and subtitle dynamically populated -->
+            </div>
+            <div class="journal-act-timeline" id="journal-act-timeline">
+              <!-- Dynamic dots for all acts progress -->
+            </div>
+          </div>
+          <div class="journal-section">
+            <h3 class="jsection-title">Active Mission Objective</h3>
+            <div id="journal-objective-box" class="journal-objective-box">
+              <!-- Current objective content + custom progress bar -->
+            </div>
+          </div>
+        </div>
+        <!-- Radio Logs Tab -->
+        <div class="journal-pane hidden" id="jpane-logs">
+          <div class="journal-section">
+            <h3 class="jsection-title">Transmission Ledger</h3>
+            <div id="journal-radio-history" class="journal-radio-history">
+              <!-- Log of last 10 dialogues shown -->
+            </div>
+          </div>
+        </div>
+        <!-- Diplomacy Tab -->
+        <div class="journal-pane hidden" id="jpane-diplomacy">
+          <div class="journal-section">
+            <h3 class="jsection-title">Faction Standings</h3>
+            <div id="journal-diplomatic-list" class="journal-diplomatic-list">
+              <!-- Standing meters for all 7 factions -->
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       GAME ENTRY POINT
+  ═══════════════════════════════════════════════════ -->
+  <script type="module" src="src/main.js"></script>
+
+</body>
+</html>

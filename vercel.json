@@ -1,0 +1,17 @@
+{
+  "cleanUrls": true,
+  "buildCommand": null,
+  "outputDirectory": ".",
+  "rebuildToken": "2026-05-28-21-00",
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+        }
+      ]
+    }
+  ]
+}
