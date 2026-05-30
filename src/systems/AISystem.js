@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import EventEmitter from '../utils/EventEmitter.js';
 import GameConfig   from '../config/GameConfig.js';
-import { Faction, FactionShipClass, FactionPersonality } from '../config/ShipConfig.js';
+import { Faction, FactionShipClass, FactionPersonality, ShipStats } from '../config/ShipConfig.js';
 import { randRange, dist2D, angleTo, wrapAngle } from '../utils/MathUtils.js';
 
 // ─── AI States ─────────────────────────────────────────────────────────────────
