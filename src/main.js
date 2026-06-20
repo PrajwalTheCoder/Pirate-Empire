@@ -52,7 +52,7 @@ import GameConfig from './config/GameConfig.js';
 import EventEmitter from './utils/EventEmitter.js';
 import { ShipClass, Faction } from './config/ShipConfig.js';
 import AudioSystem from './systems/AudioSystem.js';
-import { submitScore, getLeaderboard, checkNameAvailability, registerPlayerName } from './utils/SupabaseClient.js';
+import { submitScore, getLeaderboard, checkNameAvailability, registerPlayerName, searchLeaderboard, getPlayerRank } from './utils/SupabaseClient.js';
 
 // ══════════════════════════════════════════════════════════════════════════════
 class Game {
@@ -1253,29 +1253,86 @@ class Game {
     }
   }
 
-  async _showLeaderboard() {
+  async _showLeaderboard(searchQuery = '') {
     const loadingEl = document.getElementById('leaderboard-loading');
     const containerEl = document.getElementById('leaderboard-container');
     const rowsEl = document.getElementById('leaderboard-rows');
+    const standingEl = document.getElementById('leaderboard-my-standing');
+    const standingTextEl = document.getElementById('my-standing-text');
 
     if (!loadingEl || !containerEl || !rowsEl) return;
 
     loadingEl.classList.remove('hidden');
-    loadingEl.textContent = 'Loading high scores...';
+    loadingEl.textContent = searchQuery ? '🔍 Searching captains...' : 'Loading high scores...';
     containerEl.classList.add('hidden');
     rowsEl.innerHTML = '';
 
+    const localPlayerId = localStorage.getItem('pe_player_id');
+    const localPlayerName = localStorage.getItem('pe_player_name') || this.playerName;
+
+    // Load user standing banner if not searching
+    if (!searchQuery && localPlayerName && standingEl && standingTextEl) {
+      standingEl.classList.add('hidden');
+      getPlayerRank(localPlayerId, localPlayerName).then(res => {
+        if (res) {
+          standingEl.classList.remove('hidden');
+          const rec = res.record;
+          standingTextEl.innerHTML = `
+            <span class="standing-rank">Rank #${res.rank}</span> · 
+            <span class="standing-score">${rec.score.toLocaleString()} pts</span> · 
+            🪙 ${rec.gold.toLocaleString()} · 
+            ⚔️ ${rec.ships_destroyed} Sunk · 
+            🏝️ ${rec.islands_captured} · 
+            ⏱️ ${this._formatTime(rec.time_survived)} (${rec.outcome === 'victory' ? 'Win' : 'Loss'})
+          `;
+        }
+      }).catch(err => console.error(err));
+    } else if (standingEl) {
+      standingEl.classList.add('hidden');
+    }
+
     try {
-      const scores = await getLeaderboard(10);
+      let scores = [];
+      if (searchQuery) {
+        // Fetch up to 100 matching results, but only display first 15 to calculate absolute ranks quickly
+        const searchResults = await searchLeaderboard(searchQuery);
+        scores = searchResults.slice(0, 15);
+      } else {
+        scores = await getLeaderboard(100);
+      }
+
       if (scores && scores.length > 0) {
-        scores.forEach((entry, index) => {
+        for (let index = 0; index < scores.length; index++) {
+          const entry = scores[index];
           const tr = document.createElement('tr');
+
+          // Highlight current player's row
+          if (localPlayerId && entry.player_id === localPlayerId) {
+            tr.classList.add('leaderboard-row-highlight');
+          } else if (!localPlayerId && entry.player_name === localPlayerName) {
+            tr.classList.add('leaderboard-row-highlight');
+          }
 
           const rankTd = document.createElement('td');
           let rankText = index + 1;
-          if (index === 0) rankText = '🥇';
-          else if (index === 1) rankText = '🥈';
-          else if (index === 2) rankText = '🥉';
+
+          if (!searchQuery) {
+            if (index === 0) rankText = '🥇';
+            else if (index === 1) rankText = '🥈';
+            else if (index === 2) rankText = '🥉';
+          } else {
+            // Fetch absolute rank for searched player
+            try {
+              const rankRes = await getPlayerRank(entry.player_id, entry.player_name);
+              if (rankRes) {
+                rankText = `#${rankRes.rank}`;
+              } else {
+                rankText = `🔍`;
+              }
+            } catch {
+              rankText = `🔍`;
+            }
+          }
           rankTd.textContent = rankText;
 
           const nameTd = document.createElement('td');
@@ -1323,11 +1380,11 @@ class Game {
           tr.appendChild(timeTd);
 
           rowsEl.appendChild(tr);
-        });
+        }
         loadingEl.classList.add('hidden');
         containerEl.classList.remove('hidden');
       } else {
-        loadingEl.textContent = 'No voyages recorded yet. Set sail to claim the top spot!';
+        loadingEl.textContent = searchQuery ? '🔍 No captains found matching that name.' : 'No voyages recorded yet. Set sail to claim the top spot!';
       }
     } catch (err) {
       console.error('[Leaderboard] Error loading leaderboard:', err);
@@ -1462,18 +1519,32 @@ class Game {
     });
 
     // Leaderboard panel toggle
+    const leaderboardInput = document.getElementById('leaderboard-search-input');
+    let searchDebounceTimeout = null;
+
     document.getElementById('mm-leaderboard')?.addEventListener('click', () => {
       leaderboardPanel?.classList.toggle('hidden');
       settingsPanel?.classList.add('hidden');
       creditsPanel?.classList.add('hidden');
       coopPanel?.classList.add('hidden');
       if (leaderboardPanel && !leaderboardPanel.classList.contains('hidden')) {
+        if (leaderboardInput) leaderboardInput.value = '';
         this._showLeaderboard();
       }
     });
     document.getElementById('mm-close-leaderboard')?.addEventListener('click', () => {
       leaderboardPanel?.classList.add('hidden');
     });
+
+    if (leaderboardInput) {
+      leaderboardInput.addEventListener('input', () => {
+        if (searchDebounceTimeout) clearTimeout(searchDebounceTimeout);
+        searchDebounceTimeout = setTimeout(() => {
+          const query = leaderboardInput.value.trim();
+          this._showLeaderboard(query);
+        }, 300);
+      });
+    }
 
     // ── Fullscreen button inside main menu ──────────────────────────────────
     const menuFullscreenBtn = document.getElementById('menu-btn-fullscreen');

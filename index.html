@@ -154,6 +154,16 @@
       <button class="mm-panel-close" id="mm-close-leaderboard">✕</button>
       <h2 class="mm-panel-title">🏆 Leaderboard</h2>
       <div class="leaderboard-body">
+        <div class="leaderboard-controls">
+          <div class="leaderboard-search-container">
+            <input type="text" id="leaderboard-search-input" placeholder="🔍 Search captain's name..." maxlength="20" autocomplete="off" spellcheck="false" />
+          </div>
+          <div id="leaderboard-my-standing" class="leaderboard-my-standing hidden">
+            <span class="my-standing-label">🏴‍☠️ Your Standing:</span>
+            <span class="my-standing-value" id="my-standing-text">Loading...</span>
+          </div>
+        </div>
+
         <div id="leaderboard-loading" class="leaderboard-loading">Loading high scores...</div>
         <div id="leaderboard-container" class="leaderboard-container hidden">
           <table class="leaderboard-table">

@@ -1,8 +1,13 @@
 import { createClient } from '@supabase/supabase-js';
 
-const SUPABASE_URL     = 'https://vavuchdapxbjuyyuelja.supabase.co';
-// ── Use the JWT anon key from Supabase Dashboard → Settings → API → Project API keys
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhdnVjaGRhcHhianV5eXVlbGphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTM2NjksImV4cCI6MjA5NTQ2OTY2OX0.eWAswpV1Z4MNydRqCQzwuIDWkECbrHsKYhS9Lgx3Z1w';
+// ── Credentials are stored in .env.local — never hardcode secrets in source. ──
+// Vite exposes VITE_* vars via import.meta.env at build time.
+const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL      || '';
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+  console.error('[Supabase] ❌ Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env.local');
+}
 
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -352,4 +357,95 @@ export async function getTurnConfig() {
     return [];
   }
 }
+
+/**
+ * Search leaderboard entries by name.
+ * @param {string} nameQuery
+ * @returns {Promise<Array<object>>}
+ */
+export async function searchLeaderboard(nameQuery) {
+  try {
+    if (!nameQuery || nameQuery.trim() === '') return [];
+    
+    const { data, error } = await withTimeout(
+      supabase
+        .from('leaderboard')
+        .select('*')
+        .ilike('player_name', `%${nameQuery.trim()}%`)
+        .order('score', { ascending: false })
+        .limit(100),
+      10000, 'searchLeaderboard'
+    );
+    if (error) {
+      console.error('[Supabase] ❌ searchLeaderboard failed:', error.message);
+      return [];
+    }
+    
+    const uniqueScores = [];
+    const seenPlayers = new Set();
+
+    for (const row of (data ?? [])) {
+      const playerKey = row.player_id || row.player_name;
+      if (!seenPlayers.has(playerKey)) {
+        seenPlayers.add(playerKey);
+        uniqueScores.push(row);
+      }
+    }
+    return uniqueScores;
+  } catch (err) {
+    console.error('[Supabase] ❌ searchLeaderboard threw:', err.message);
+    return [];
+  }
+}
+
+/**
+ * Fetch a player's rank and high score statistics.
+ * @param {string|null} playerId
+ * @param {string} playerName
+ * @returns {Promise<object|null>}
+ */
+export async function getPlayerRank(playerId, playerName) {
+  try {
+    let query = supabase.from('leaderboard').select('*');
+    if (playerId) {
+      query = query.eq('player_id', playerId);
+    } else {
+      query = query.eq('player_name', playerName);
+    }
+    
+    const { data: scoreData, error: scoreErr } = await withTimeout(
+      query.order('score', { ascending: false }).limit(1),
+      5000, 'getPlayerRankHighScore'
+    );
+    
+    if (scoreErr || !scoreData || scoreData.length === 0) {
+      return null;
+    }
+    
+    const record = scoreData[0];
+    const highScore = record.score;
+    
+    const { count, error: countErr } = await withTimeout(
+      supabase
+        .from('leaderboard')
+        .select('*', { count: 'exact', head: true })
+        .gt('score', highScore),
+      5000, 'getPlayerRankCount'
+    );
+    
+    if (countErr) {
+      console.error('[Supabase] ❌ getPlayerRank count failed:', countErr.message);
+      return null;
+    }
+    
+    return {
+      rank: (count ?? 0) + 1,
+      record: record
+    };
+  } catch (err) {
+    console.error('[Supabase] ❌ getPlayerRank threw:', err.message);
+    return null;
+  }
+}
+
 
