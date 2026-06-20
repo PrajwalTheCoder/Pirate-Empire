@@ -1206,7 +1206,7 @@ class Game {
     loadingEl.textContent = '🏆 Fetching high scores...';
     loadingEl.style.color = '';
 
-    const scores = await getLeaderboard(10);
+    const scores = await getLeaderboard(4);
     if (scores && scores.length > 0) {
       scores.forEach((entry, index) => {
         const tr = document.createElement('tr');
