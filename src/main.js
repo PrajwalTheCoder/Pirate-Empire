@@ -32,6 +32,7 @@ import PerkSystem     from './systems/PerkSystem.js';
 import MultiplayerSystem, { QUICK_CHAT } from './systems/MultiplayerSystem.js';
 import WorldEventSystem  from './systems/WorldEventSystem.js';
 import StorySystem       from './systems/StorySystem.js';
+import MobileControls    from './systems/MobileControls.js';
 
 // ── World ────────────────────────────────────────────────────────────────────
 import Ocean           from './world/Ocean.js';
@@ -365,6 +366,7 @@ class Game {
   _initSystems() {
     // Input
     this.input = new InputSystem();
+    this.mobile = new MobileControls(this.input);
 
     // Ships
     this.ships = new ShipSystem(this.scene, this.ocean);
@@ -415,8 +417,8 @@ class Game {
       this.hud?.toast(`${perk.icon} Perk Unlocked: ${perk.name}!`, 'success');
     });
 
-    // AI enemies
-    this.ai = new AISystem(this.ships, this.combat, this._islands);
+    // AI enemies — pass `this` so agents can query story/reputation without window.__game
+    this.ai = new AISystem(this.ships, this.combat, this._islands, this);
     this.ai.spawnInitialEnemies();
 
     // World Event System (Living Ocean)
@@ -2320,7 +2322,8 @@ async function bootstrap() {
   // Victory event
   EventEmitter.on('game:victory', () => game._showVictory());
 
-  // Attach game to window for debugging
+  // DEBUG-ONLY: expose game on window for browser console access.
+  // Do not rely on this in production code — use injected references instead.
   window.__game = game;
 }
 

@@ -51,6 +51,23 @@ export class InputSystem {
   /** Was it released THIS frame? */
   justReleased(code) { return this._justReleased.has(code); }
 
+  /**
+   * Inject a virtual key-down (used by MobileControls for touch buttons).
+   * Safe to call from outside — behaves identically to a real keydown event.
+   */
+  injectKeyDown(code) {
+    if (!this._keys.has(code)) this._justPressed.add(code);
+    this._keys.add(code);
+  }
+
+  /**
+   * Inject a virtual key-up (used by MobileControls for touch buttons).
+   */
+  injectKeyUp(code) {
+    this._keys.delete(code);
+    this._justReleased.add(code);
+  }
+
   /** Call once per frame to clear single-frame flags. */
   update() {
     this._justPressed.clear();
