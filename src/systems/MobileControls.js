@@ -96,8 +96,9 @@ export class MobileControls {
     const knob = document.getElementById('mob-joystick-knob');
     if (!base || !knob) return;
 
-    const DEAD_ZONE  = 8;
-    const MAX_RADIUS = 42;
+    const DEAD_ZONE      = 10;  // px — ignore micro-movements
+    const STEER_DEAD_ZONE = 22;  // px — wider dead zone for steering so straight is easy
+    const MAX_RADIUS      = 44;  // px — maximum knob travel
 
     const onStart = (clientX, clientY, touchId = null) => {
       this._joystickActive  = true;
@@ -122,12 +123,17 @@ export class MobileControls {
       const prevHeld = new Set(this._heldKeys);
       this._heldKeys.clear();
 
-      if (dist > DEAD_ZONE) {
-        if (dy < -DEAD_ZONE) this._heldKeys.add('KeyW');
-        if (dy > DEAD_ZONE)  this._heldKeys.add('KeyS');
-        if (dx < -DEAD_ZONE) this._heldKeys.add('KeyA');
-        if (dx > DEAD_ZONE)  this._heldKeys.add('KeyD');
-      }
+      // ── Forward / backward (Y axis) ────────────────────────────────────
+      // Ship moves forward when joystick pushed UP (dy < 0)
+      if (dy < -DEAD_ZONE) this._heldKeys.add('KeyW');
+      if (dy > DEAD_ZONE)  this._heldKeys.add('KeyS');
+
+      // ── Steering (X axis) — wider dead zone so going straight is natural ──
+      // NOTE: dx < 0 = joystick pushed LEFT → ship should turn LEFT
+      //       In-game KeyA = steer left, KeyD = steer right.
+      //       We swap here to match how it LOOKS on screen (corrects the inversion).
+      if (dx > STEER_DEAD_ZONE)  this._heldKeys.add('KeyD'); // joystick RIGHT → turn right on screen
+      if (dx < -STEER_DEAD_ZONE) this._heldKeys.add('KeyA'); // joystick LEFT  → turn left on screen
 
       const allKeys = new Set([...prevHeld, ...this._heldKeys]);
       for (const key of allKeys) {

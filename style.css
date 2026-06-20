@@ -3817,16 +3817,25 @@ html, body {
 }
 
 /* ─── Global mobile overrides ────────────────────────────── */
-body.mobile-device #bottom-panel   { display: none !important; }
-body.mobile-device #right-panel    { display: none !important; }
+body.mobile-device #bottom-panel    { display: none !important; }
+body.mobile-device #right-panel     { display: none !important; }
 body.mobile-device #minimap-container { display: none !important; }
-body.mobile-device #controls-hint  { display: none !important; }
-body.mobile-device #fps-counter    { display: none !important; }
-body.mobile-device #hud            { height: 48px; padding: 0 10px; }
-body.mobile-device .resource-item  { padding: 3px 7px; min-width: 60px; }
-body.mobile-device .resource-label { display: none; }
-body.mobile-device .resource-value { font-size: 0.9rem; }
-body.mobile-device .hud-title      { font-size: 1rem; }
+body.mobile-device #controls-hint   { display: none !important; }
+body.mobile-device #fps-counter     { display: none !important; }
+/* Ammo selector (Round/Chain/Fire) blocks center of screen on mobile — hide it */
+body.mobile-device #ammo-selector   { display: none !important; }
+/* Perk bar also covers content on small screens */
+body.mobile-device #perk-bar        { display: none !important; }
+/* World log ticker overlaps center — hide on mobile */
+body.mobile-device #world-log-ticker { display: none !important; }
+/* Move interaction prompt up so it doesn't clash with controls */
+body.mobile-device #prompt { bottom: 240px; }
+/* Compact the HUD */
+body.mobile-device #hud             { height: 48px; padding: 0 10px; }
+body.mobile-device .resource-item   { padding: 3px 7px; min-width: 60px; }
+body.mobile-device .resource-label  { display: none; }
+body.mobile-device .resource-value  { font-size: 0.9rem; }
+body.mobile-device .hud-title       { font-size: 1rem; }
 
 /* ─── Bottom panel: hidden by default, slides up on menu toggle ── */
 body.mobile-device #bottom-panel.mob-panel-open {
