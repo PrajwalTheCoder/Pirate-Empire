@@ -753,38 +753,50 @@
 
   <!-- ═══════════════════════════════════════════════════
        MOBILE TOUCH CONTROLS OVERLAY
-       Hidden on desktop via CSS — only shown on touch devices
-       (mobile-device class is added to <body> by MobileControls.js)
+       Hidden on desktop via CSS — only shown on touch devices.
+       MobileControls.js adds .mobile-device to <body>.
   ═══════════════════════════════════════════════════ -->
   <div id="mobile-controls" aria-hidden="true">
 
-    <!-- Left side: virtual joystick -->
-    <div id="mob-joystick-zone">
-      <div id="mob-joystick-base">
-        <div id="mob-joystick-knob"></div>
-      </div>
+    <!-- Top bar: fullscreen + menu toggle (above the game content) -->
+    <div id="mob-top-bar">
+      <button id="mob-btn-fullscreen" class="mob-top-btn" title="Go fullscreen" aria-label="Toggle fullscreen">⛶</button>
+      <div class="mob-top-label">PIRATE EMPIRE</div>
+      <button id="mob-btn-menu"       class="mob-top-btn" title="Open menu" aria-label="Toggle game menu">☰</button>
     </div>
 
-    <!-- Right side: action buttons -->
-    <div id="mob-action-zone">
-      <!-- Row 1: primary actions -->
-      <div class="mob-btn-row">
-        <button id="mob-btn-fire"    class="mob-btn mob-btn-fire"    aria-label="Fire cannons">💣</button>
-        <button id="mob-btn-anchor"  class="mob-btn mob-btn-anchor"  aria-label="Drop anchor">⚓</button>
-      </div>
-      <!-- Row 2: interactions -->
-      <div class="mob-btn-row">
-        <button id="mob-btn-capture" class="mob-btn mob-btn-capture" aria-label="Capture island">🏝️</button>
-        <button id="mob-btn-board"   class="mob-btn mob-btn-board"   aria-label="Board ship">🏴‍☠️</button>
-        <button id="mob-btn-repair"  class="mob-btn mob-btn-repair"  aria-label="Repair hull">🔧</button>
-      </div>
-      <!-- Row 3: meta buttons -->
-      <div class="mob-btn-row mob-btn-row-meta">
-        <button id="mob-btn-journal" class="mob-btn mob-btn-meta"    aria-label="Captain's journal">📖</button>
-        <button id="mob-btn-pause"   class="mob-btn mob-btn-meta"    aria-label="Pause game">⏸</button>
-      </div>
-    </div>
+    <!-- Bottom controls row -->
+    <div id="mob-bottom-controls">
 
+      <!-- Left: virtual joystick -->
+      <div id="mob-joystick-zone">
+        <div id="mob-joystick-base">
+          <div id="mob-joystick-knob"></div>
+        </div>
+      </div>
+
+      <!-- Center: spacer (keeps joystick left, buttons right) -->
+      <div class="mob-center-spacer"></div>
+
+      <!-- Right: action buttons -->
+      <div id="mob-action-zone">
+        <!-- Fire is the biggest, most important button -->
+        <div class="mob-btn-row">
+          <button id="mob-btn-capture" class="mob-btn mob-btn-capture" aria-label="Capture island (E)">🏝️</button>
+          <button id="mob-btn-board"   class="mob-btn mob-btn-board"   aria-label="Board ship (B)">🏴‍☠️</button>
+          <button id="mob-btn-repair"  class="mob-btn mob-btn-repair"  aria-label="Repair hull (R)">🔧</button>
+        </div>
+        <div class="mob-btn-row">
+          <button id="mob-btn-journal" class="mob-btn mob-btn-meta"    aria-label="Journal (J)">📖</button>
+          <button id="mob-btn-anchor"  class="mob-btn mob-btn-anchor"  aria-label="Drop anchor (Q)">⚓</button>
+          <button id="mob-btn-fire"    class="mob-btn mob-btn-fire"    aria-label="Fire cannons (Space)">💣</button>
+        </div>
+        <div class="mob-btn-row mob-btn-row-meta">
+          <button id="mob-btn-pause"   class="mob-btn mob-btn-meta"    aria-label="Pause (ESC)">⏸</button>
+        </div>
+      </div>
+
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════
