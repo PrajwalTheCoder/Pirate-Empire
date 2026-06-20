@@ -2,8 +2,8 @@ import { createClient } from '@supabase/supabase-js';
 
 // ── Credentials are stored in .env.local — never hardcode secrets in source. ──
 // Vite exposes VITE_* vars via import.meta.env at build time.
-const SUPABASE_URL      = import.meta.env.VITE_SUPABASE_URL      || '';
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const SUPABASE_URL      = (import.meta.env && import.meta.env.VITE_SUPABASE_URL)      || 'https://vavuchdapxbjuyyuelja.supabase.co';
+const SUPABASE_ANON_KEY = (import.meta.env && import.meta.env.VITE_SUPABASE_ANON_KEY) || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZhdnVjaGRhcHhianV5eXVlbGphIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzk4OTM2NjksImV4cCI6MjA5NTQ2OTY2OX0.eWAswpV1Z4MNydRqCQzwuIDWkECbrHsKYhS9Lgx3Z1w';
 
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
   console.error('[Supabase] ❌ Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY in .env.local');
