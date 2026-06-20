@@ -3837,6 +3837,43 @@ body.mobile-device .resource-label  { display: none; }
 body.mobile-device .resource-value  { font-size: 0.9rem; }
 body.mobile-device .hud-title       { font-size: 1rem; }
 
+/* ─── Game Over / Victory screen — mobile compact ───────── */
+body.mobile-device #game-over-overlay,
+body.mobile-device #victory-overlay {
+  align-items: flex-start;
+  padding-top: 0;
+  overflow-y: auto;
+}
+
+body.mobile-device .game-over-content {
+  padding: 1rem 1.2rem 1.4rem;
+  max-width: 100%;
+  width: 94vw;
+  margin: auto;
+  border-radius: 10px;
+  margin-top: 54px; /* clear the HUD */
+  margin-bottom: 16px;
+}
+
+body.mobile-device .game-over-skull  { font-size: 2.4rem; margin-bottom: 0.2rem; }
+body.mobile-device .game-over-title  { font-size: 1.9rem; margin-bottom: 0.2rem; letter-spacing: 0.06em; }
+body.mobile-device .game-over-sub    { font-size: 0.78rem; margin-bottom: 0.8rem; }
+
+body.mobile-device .game-over-stats  { padding: 0.6rem 1rem; margin-bottom: 0.8rem; }
+body.mobile-device .go-stat-row      { padding: 0.25rem 0; }
+body.mobile-device .go-stat-label    { font-size: 0.78rem; }
+body.mobile-device .go-stat-value    { font-size: 1rem; }
+
+body.mobile-device .game-over-leaderboard { margin-bottom: 0.8rem; }
+body.mobile-device .go-lb-title      { font-size: 0.9rem; }
+
+body.mobile-device .leaderboard-table { font-size: 0.68rem; }
+body.mobile-device .leaderboard-table th,
+body.mobile-device .leaderboard-table td { padding: 4px 5px; }
+
+body.mobile-device .game-over-btns   { margin-top: 0.6rem; }
+body.mobile-device .go-btn           { font-size: 0.95rem; padding: 0.55rem 1.6rem; }
+
 /* ─── Bottom panel: hidden by default, slides up on menu toggle ── */
 body.mobile-device #bottom-panel.mob-panel-open {
   display: block !important;
