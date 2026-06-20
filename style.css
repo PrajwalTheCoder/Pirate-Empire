@@ -596,6 +596,49 @@ html, body {
   text-shadow: 0 0 12px rgba(200,120,50,0.5);
 }
 
+/* Fullscreen button on main menu */
+.menu-fullscreen-btn {
+  position: absolute;
+  top: 16px;
+  right: 16px;
+  z-index: 510;
+  width: 46px;
+  height: 46px;
+  border-radius: 10px;
+  border: 1.5px solid rgba(200, 140, 40, 0.55);
+  background: rgba(10, 20, 50, 0.85);
+  color: #d4a840;
+  font-size: 1.4rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  backdrop-filter: blur(6px);
+  transition:
+    background 0.2s,
+    color 0.2s,
+    border-color 0.2s,
+    transform 0.15s,
+    box-shadow 0.2s;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: none;
+  user-select: none;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+}
+
+.menu-fullscreen-btn:hover {
+  background: rgba(180, 100, 10, 0.65);
+  color: #fff8d0;
+  border-color: #f0c040;
+  transform: translateY(-2px) scale(1.04);
+  box-shadow: 0 6px 20px rgba(240,160,20,0.35), 0 0 24px rgba(240,100,0,0.15);
+}
+
+.menu-fullscreen-btn:active {
+  transform: translateY(1px) scale(0.97);
+  box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+}
+
 /* ── Menu buttons ─────────────────────────────────────── */
 .mm-nav {
   display: flex;

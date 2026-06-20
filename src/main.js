@@ -1475,6 +1475,37 @@ class Game {
       leaderboardPanel?.classList.add('hidden');
     });
 
+    // ── Fullscreen button inside main menu ──────────────────────────────────
+    const menuFullscreenBtn = document.getElementById('menu-btn-fullscreen');
+    if (menuFullscreenBtn) {
+      const toggleMenuFullscreen = () => {
+        if (!document.fullscreenElement) {
+          document.documentElement.requestFullscreen().catch(() => {});
+        } else {
+          document.exitFullscreen().catch(() => {});
+        }
+      };
+
+      menuFullscreenBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        toggleMenuFullscreen();
+      });
+
+      menuFullscreenBtn.addEventListener('touchstart', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleMenuFullscreen();
+      }, { passive: false });
+
+      const updateBtnText = () => {
+        menuFullscreenBtn.textContent = document.fullscreenElement ? '✕⛶' : '⛶';
+        menuFullscreenBtn.title = document.fullscreenElement ? 'Exit fullscreen' : 'Go fullscreen';
+      };
+
+      document.addEventListener('fullscreenchange', updateBtnText);
+      updateBtnText();
+    }
+
     // Live-update slider values and drive AudioSystem volumes
     ['master', 'music', 'sfx'].forEach(id => {
       const slider = document.getElementById(`s-${id}`);
