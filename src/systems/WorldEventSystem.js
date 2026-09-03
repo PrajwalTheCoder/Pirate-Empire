@@ -149,9 +149,14 @@ export class WorldEventSystem {
     this._krakenTimer -= delta;
 
     // Trigger next world event
+    // In co-op mode the CLIENT never spawns ships independently — the HOST broadcasts
+    // all AI state via the AI sync packets. Only tick the event timer on the host/standalone.
+    const isCoopClient = this.game?.isCoop && this.game?.mp?.isClient;
     if (this._eventTimer <= 0) {
       this._eventTimer = 30 + Math.random() * 60;   // next: 30–90s
-      this._triggerRandomEvent(playerPos);
+      if (!isCoopClient) {
+        this._triggerRandomEvent(playerPos);
+      }
     }
 
     // Kraken tentacle pulse
@@ -233,8 +238,9 @@ export class WorldEventSystem {
       }
     }
 
-    this.specialMarkers.push({ x: sx, z: sz, color: '#ffcc44', label: '🚢 Convoy' });
-    setTimeout(() => this.specialMarkers.shift(), 60000);
+    this.specialMarkers.push({ id: 'convoy_' + Date.now(), x: sx, z: sz, color: '#ffcc44', label: '🚢 Convoy' });
+    const markerId = this.specialMarkers[this.specialMarkers.length - 1].id;
+    setTimeout(() => this.specialMarkers = this.specialMarkers.filter(m => m.id !== markerId), 60000);
   }
 
   _spawnNavyPatrol(px, pz) {
@@ -265,9 +271,9 @@ export class WorldEventSystem {
   }
 
   _spawnGhostFleet(px, pz) {
-    // Only at "night" (after 10 min game time)
-    const isNight = this._gameTime > 120;   // 2 min for dev, 10 min for production
-
+    // Only spawn ghost fleet at night (after 2 min game time)
+    const isNight = this._gameTime > 120;
+    if (!isNight) return;  // ghosts don't walk in daylight
     if (this._ghostFleet.length > 0) return; // only one ghost fleet active at a time
 
     const angle = Math.random() * Math.PI * 2;
@@ -303,8 +309,9 @@ export class WorldEventSystem {
       this._ghostFleet = [];
     }, 180_000);
 
-    this.specialMarkers.push({ x: sx, z: sz, color: '#00ffcc', label: '👻 Ghost Fleet' });
-    setTimeout(() => this.specialMarkers.shift(), 30000);
+    this.specialMarkers.push({ id: 'ghost_' + Date.now(), x: sx, z: sz, color: '#00ffcc', label: '👻 Ghost Fleet' });
+    const ghostMarkerId = this.specialMarkers[this.specialMarkers.length - 1].id;
+    setTimeout(() => this.specialMarkers = this.specialMarkers.filter(m => m.id !== ghostMarkerId), 30000);
   }
 
   _spawnLegendaryCaptain(px, pz) {
@@ -357,11 +364,12 @@ export class WorldEventSystem {
     }, 2000);
 
     this._legendaryShip = ship;
-    this.specialMarkers.push({ x: sx, z: sz, color: '#ffaa00', label: `💀 ${cap.name}` });
-    setTimeout(() => this.specialMarkers.shift(), 60000);
+    const legendMarkerId = 'legendary_' + Date.now();
+    this.specialMarkers.push({ id: legendMarkerId, x: sx, z: sz, color: '#ffaa00', label: `💀 ${cap.name}` });
+    setTimeout(() => this.specialMarkers = this.specialMarkers.filter(m => m.id !== legendMarkerId), 60000);
 
-    // Listen for when this captain is destroyed
-    EventEmitter.on('ship:destroyed', (data) => {
+    // Listen for when this captain is destroyed — use once() to avoid stacking listeners
+    EventEmitter.once('ship:destroyed', (data) => {
       if (data.ship === ship) {
         mem.timesDefeated++;
         mem.angerLevel = Math.min(10, mem.angerLevel + 1);
@@ -391,8 +399,9 @@ export class WorldEventSystem {
       if (escort && this.ai) this.ai.registerShip(escort, 'NAVY');
     }
 
-    this.specialMarkers.push({ x: sx, z: sz, color: '#ffd700', label: '💰 Treasure!' });
-    setTimeout(() => this.specialMarkers.shift(), 90000);
+    const treasureMarkerId = 'treasure_' + Date.now();
+    this.specialMarkers.push({ id: treasureMarkerId, x: sx, z: sz, color: '#ffd700', label: '💰 Treasure!' });
+    setTimeout(() => this.specialMarkers = this.specialMarkers.filter(m => m.id !== treasureMarkerId), 90000);
   }
 
   _triggerStormSurge() {
@@ -522,8 +531,9 @@ export class WorldEventSystem {
       if (raider && this.ai) this.ai.registerShip(raider, 'NAVY');
     }
 
-    this.specialMarkers.push({ x: ix, z: iz, color: '#ff4444', label: '🔥 Island Raid!' });
-    setTimeout(() => this.specialMarkers.shift(), 45000);
+    const raidMarkerId = 'raid_' + Date.now();
+    this.specialMarkers.push({ id: raidMarkerId, x: ix, z: iz, color: '#ff4444', label: '🔥 Island Raid!' });
+    setTimeout(() => this.specialMarkers = this.specialMarkers.filter(m => m.id !== raidMarkerId), 45000);
     EventEmitter.emit('world:island_raid', { island: target });
   }
 

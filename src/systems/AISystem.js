@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import EventEmitter from '../utils/EventEmitter.js';
 import GameConfig   from '../config/GameConfig.js';
 import { Faction, FactionShipClass, FactionPersonality, ShipStats } from '../config/ShipConfig.js';
-import { randRange, dist2D, angleTo, wrapAngle } from '../utils/MathUtils.js';
+import { lerp, randRange, dist2D, angleTo, wrapAngle } from '../utils/MathUtils.js';
 
 // ─── AI States ─────────────────────────────────────────────────────────────────
 const AIState = { PATROL: 0, ALERT: 1, CHASE: 2, ATTACK: 3, RETREAT: 4, RAID: 5 };
@@ -83,7 +83,9 @@ class AIAgent {
   constructor(ship, personality = 'NAVY', islands = [], islandData = [], leader = null) {
     this.ship          = ship;
     this.personality   = personality;
+    this._faction      = ship.faction;  // stored for difficulty escalation spawning
     this._cfg          = { ...PersonalityConfig[personality] ?? PersonalityConfig.NAVY };
+    this._baseCooldown = this._cfg.fireCooldown;  // preserve original for difficulty floor
     this._islands      = islands;
     this._islandData   = islandData;
     this.state         = AIState.PATROL;
@@ -134,7 +136,7 @@ class AIAgent {
     const cfg   = this._cfg;
     const hpPct = ship.health / ship.maxHealth;
 
-    const game = window.__game;
+    const game = this._gameRef;
     const navyRep = game?.story?.getFactionReputation('ROYAL_NAVY') ?? 0;
     
     // Navy speed boost based on hostile reputation
@@ -390,10 +392,12 @@ export class AISystem {
    * @param {ShipSystem}      shipSystem
    * @param {CombatSystem}    combatSystem
    * @param {object[]}        islands      — island data objects with .x/.z position
+   * @param {object|null}     [game]       — optional Game reference for story/reputation access
    */
-  constructor(shipSystem, combatSystem, islands = []) {
+  constructor(shipSystem, combatSystem, islands = [], game = null) {
     this._shipSystem   = shipSystem;
     this._combatSystem = combatSystem;
+    this._game         = game;   // stored for passing to agents
     this._islands = islands;
     this._islandPositions = islands.map(isl => ({
       x: isl.x ?? isl.position?.x ?? 0,
@@ -405,9 +409,43 @@ export class AISystem {
     /** @type {Object.<string,number>} faction → seconds remaining angry */
     this._angeredFactions = {};
 
+    /**
+     * Sync mode for co-op:
+     *   'STANDALONE' — single-player, normal behaviour (default)
+     *   'HOST'       — runs full AI, serializes state for broadcast
+     *   'CLIENT'     — no local spawning; applies network state from host
+     * @type {'STANDALONE'|'HOST'|'CLIENT'}
+     */
+    this.syncMode = 'STANDALONE';
+
+    /**
+     * Client-only: pool of ghost ships keyed by host-assigned ship ID.
+     * Each entry: { ship } — positions are driven by the jitter buffer.
+     * @type {Map<string,{ship:object}>}
+     */
+    this._clientGhosts = new Map();
+
+    /**
+     * Jitter buffer — ring buffer of received AI state snapshots.
+     * Each entry: { receiveTs: number, states: Map<id, {x,z,ry,hp,mhp,cls,fac}> }
+     * Kept sorted ascending by receiveTs. Capped at 30 entries (~3s at 10Hz).
+     * @type {Array<{receiveTs:number, states:Map<string,object>}>}
+     */
+    this._jitterBuffer = [];
+
+    /**
+     * Fixed render delay (ms). Client renders AI ghost positions that are this
+     * many milliseconds in the past. Eliminates stutter when packets arrive late.
+     * 100ms is the standard used by Valve, Epic, Riot.
+     */
+    this._jitterDelay = 100;
+
     EventEmitter.on('ship:destroyed', ({ ship }) => {
       if (ship.faction !== Faction.PLAYER) {
-        this._scheduleRespawn(ship.faction);
+        // Only HOST/STANDALONE schedules respawns — client waits for network state
+        if (this.syncMode !== 'CLIENT') {
+          this._scheduleRespawn(ship.faction);
+        }
         this._agents = this._agents.filter(a => a.ship !== ship);
       }
       // Sinking a Merchant angers the Dutch faction for 3 minutes
@@ -444,6 +482,7 @@ export class AISystem {
   /** Register an existing ship in the AI system. */
   registerShip(ship, personality = 'NAVY') {
     const agent = new AIAgent(ship, personality, this._islandPositions, this._islands);
+    agent._gameRef = this._game;  // inject game ref so agent can query story/reputation
     this._agents.push(agent);
     return agent;
   }
@@ -451,6 +490,9 @@ export class AISystem {
 
   /** Spawn initial enemy ships — called once after world init. */
   spawnInitialEnemies() {
+    // CLIENT never spawns locally — ships arrive via network
+    if (this.syncMode === 'CLIENT') return;
+
     const spawnCounts = {
       [Faction.BRITISH]:       3,
       [Faction.SPANISH]:       2,
@@ -481,6 +523,9 @@ export class AISystem {
   }
 
   _spawnEnemy(faction) {
+    // CLIENT never spawns locally — ships arrive via network
+    if (this.syncMode === 'CLIENT') return null;
+
     const cls         = FactionShipClass[faction];
     const personality = FactionPersonality[faction] ?? 'NAVY';
     const half        = GameConfig.WORLD_SIZE / 2 - 80;
@@ -489,11 +534,15 @@ export class AISystem {
 
     const ship  = this._shipSystem.createShip(cls, faction, x, z);
     const agent = new AIAgent(ship, personality, this._islandPositions, this._islands);
+    agent._gameRef = this._game;  // inject game ref
     this._agents.push(agent);
     return ship;
   }
 
   _scheduleRespawn(faction) {
+    // CLIENT never schedules respawns — host drives all spawning
+    if (this.syncMode === 'CLIENT') return;
+
     // Pirate Hunter is a rare boss — takes 3× longer
     const delay = faction === Faction.PIRATE_HUNTER
       ? GameConfig.AI_RESPAWN_DELAY * 3
@@ -522,19 +571,19 @@ export class AISystem {
     if (this._difficultyTimer >= 120) {
       this._difficultyTimer -= 120;
       this._difficultyLevel = (this._difficultyLevel || 0) + 1;
-      // Spawn one extra enemy from a random existing faction
+      // Spawn one extra enemy from a random existing faction (now reads _faction correctly)
       const factions = [...new Set(this._agents.map(a => a._faction))].filter(Boolean);
       if (factions.length > 0) {
         const f = factions[Math.floor(Math.random() * factions.length)];
         this._spawnEnemy(f);
       }
-      // Each agent fires 5 % faster (cap reduction at 60 % of original)
+      // Each agent fires 5% faster each ramp tick.
+      // Use stored _baseCooldown as the floor so it never compounds to near-zero.
       for (const agent of this._agents) {
-        if (agent._cfg) {
-          agent._cfg.fireCooldown = Math.max(
-            agent._cfg.fireCooldown * 0.4,
-            agent._cfg.fireCooldown * 0.95,
-          );
+        if (agent._cfg && agent._baseCooldown !== Infinity) {
+          const newCooldown = agent._cfg.fireCooldown * 0.95;
+          const floor       = agent._baseCooldown * 0.40;  // never faster than 40% of original
+          agent._cfg.fireCooldown = Math.max(floor, newCooldown);
         }
       }
     }
@@ -553,6 +602,178 @@ export class AISystem {
   }
 
   get agentCount() { return this._agents.length; }
+
+  // ─── Co-op sync helpers ───────────────────────────────────────────────────────────────
+
+  /**
+   * HOST → returns a compact serialisable snapshot of all current AI ships.
+   * Called each frame by main.js; the array is passed to MultiplayerSystem.sendAIState().
+   * @returns {Array}
+   */
+  getSerializableState() {
+    const out = [];
+    for (const agent of this._agents) {
+      const ship = agent.ship;
+      if (!ship.isSailing) continue;
+      const p = ship.group.position;
+      out.push({
+        id:  ship.id,
+        cls: ship.shipClass,
+        fac: ship.faction,
+        x:   parseFloat(p.x.toFixed(1)),
+        z:   parseFloat(p.z.toFixed(1)),
+        ry:  parseFloat(ship.group.rotation.y.toFixed(3)),
+        hp:  Math.round(ship.health),
+        mhp: Math.round(ship.maxHealth),
+      });
+    }
+    return out;
+  }
+
+  /**
+   * CLIENT — push a received AI snapshot into the jitter buffer.
+   * Called by mp.onAIState callback with the data from MultiplayerSystem.
+   *
+   * @param {{ receiveTs: number, ships: Array<{id,cls,fac,x,z,ry,hp,mhp}> }} packet
+   */
+  pushNetworkStates(packet) {
+    if (this.syncMode !== 'CLIENT') return;
+
+    const stateMap = new Map();
+    for (const s of packet.ships) {
+      stateMap.set(s.id, s);
+    }
+
+    this._jitterBuffer.push({ receiveTs: packet.receiveTs, states: stateMap });
+
+    // Keep buffer sorted and capped
+    this._jitterBuffer.sort((a, b) => a.receiveTs - b.receiveTs);
+    if (this._jitterBuffer.length > 30) {
+      this._jitterBuffer.shift();
+    }
+
+    // Ensure ghost ships exist for every ship in the snapshot
+    for (const [id, s] of stateMap) {
+      if (!this._clientGhosts.has(id)) {
+        const ship = this._shipSystem.createShip(s.cls, s.fac, s.x, s.z);
+        // Override the auto-generated id with the host's authoritative id
+        this._shipSystem._ships.delete(ship.id);
+        ship.id = s.id;
+        ship.group.name = `ship_${s.id}`;
+        this._shipSystem._ships.set(s.id, ship);
+        ship.group.rotation.y = s.ry;
+        ship.health    = s.hp;
+        ship.maxHealth = s.mhp ?? s.hp;
+        this._clientGhosts.set(id, { ship });
+      } else {
+        // Update health immediately (non-interpolated — health snaps, not lerps)
+        const ghost = this._clientGhosts.get(id);
+        ghost.ship.health    = s.hp;
+        ghost.ship.maxHealth = s.mhp ?? s.hp;
+        if (s.hp <= 0 && ghost.ship.isSailing) {
+          ghost.ship.health = 0;
+          ghost.ship._beginSinking?.();
+        }
+      }
+    }
+
+    // Sink ships that the host no longer reports
+    const allReportedIds = stateMap;
+    for (const [id, ghost] of this._clientGhosts) {
+      // Only prune if we have enough buffer history (avoid false removals on first few packets)
+      if (this._jitterBuffer.length > 2 && !allReportedIds.has(id)) {
+        if (ghost.ship.isSailing) {
+          ghost.ship.health = 0;
+          ghost.ship._beginSinking?.();
+        }
+        this._clientGhosts.delete(id);
+      }
+    }
+  }
+
+  /**
+   * CLIENT — per-frame interpolation using the jitter buffer.
+   * Replaces the old _tickClientLerp() which used instant lerp-to-target.
+   *
+   * Algorithm:
+   *   renderTs = performance.now() - _jitterDelay
+   *   Find the two buffer entries (prev, next) straddling renderTs.
+   *   Compute alpha = (renderTs - prev.ts) / (next.ts - prev.ts)
+   *   Interpolate x, z, rotY for each ghost ship.
+   *
+   * If only one entry exists (early join), fall back to snap-to-position.
+   *
+   * @param {number} nowTs — performance.now() from the caller
+   */
+  tickJitterInterp(nowTs) {
+    if (this.syncMode !== 'CLIENT') return;
+    if (this._jitterBuffer.length === 0) return;
+
+    const renderTs = nowTs - this._jitterDelay;
+
+    // Find prev / next bracket around renderTs
+    let prev = null;
+    let next = null;
+
+    for (let i = 0; i < this._jitterBuffer.length; i++) {
+      const entry = this._jitterBuffer[i];
+      if (entry.receiveTs <= renderTs) {
+        prev = entry;
+      } else {
+        next = entry;
+        break;
+      }
+    }
+
+    // Edge case: renderTs is before all buffered data → use oldest entry (snap)
+    if (!prev) {
+      prev = this._jitterBuffer[0];
+      next = null;
+    }
+
+    for (const [id, ghost] of this._clientGhosts) {
+      const ship = ghost.ship;
+      if (!ship.isSailing) continue;
+
+      const prevState = prev.states.get(id);
+      const nextState = next?.states.get(id);
+
+      if (!prevState) continue; // not in this snapshot — skip
+
+      if (!nextState) {
+        // Only one data point — snap directly
+        ship.group.position.x = prevState.x;
+        ship.group.position.z = prevState.z;
+        // Shortest-path angle
+        let da = prevState.ry - ship.group.rotation.y;
+        while (da >  Math.PI) da -= 2 * Math.PI;
+        while (da < -Math.PI) da += 2 * Math.PI;
+        ship.group.rotation.y += da * 0.3;
+        continue;
+      }
+
+      // Compute interpolation alpha [0, 1]
+      const span  = next.receiveTs - prev.receiveTs;
+      const alpha = span > 0 ? Math.min(1, (renderTs - prev.receiveTs) / span) : 1;
+
+      // Interpolate position
+      ship.group.position.x = prevState.x + (nextState.x - prevState.x) * alpha;
+      ship.group.position.z = prevState.z + (nextState.z - prevState.z) * alpha;
+
+      // Shortest-path rotation interpolation
+      let targetRY = prevState.ry + (nextState.ry - prevState.ry) * alpha;
+      let da = targetRY - ship.group.rotation.y;
+      while (da >  Math.PI) da -= 2 * Math.PI;
+      while (da < -Math.PI) da += 2 * Math.PI;
+      ship.group.rotation.y += da * 0.5; // partial-frame smoothing
+    }
+
+    // Trim old buffer entries that are more than 2s behind the render window
+    const cutoff = renderTs - 2000;
+    while (this._jitterBuffer.length > 2 && this._jitterBuffer[0].receiveTs < cutoff) {
+      this._jitterBuffer.shift();
+    }
+  }
 }
 
 export default AISystem;

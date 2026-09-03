@@ -419,6 +419,10 @@ class Game {
 
     // AI enemies — pass `this` so agents can query story/reputation without window.__game
     this.ai = new AISystem(this.ships, this.combat, this._islands, this);
+    // Co-op: set syncMode before spawning so client never spawns local enemies
+    if (this.mp) {
+      this.ai.syncMode = this.mp.isHost ? 'HOST' : 'CLIENT';
+    }
     this.ai.spawnInitialEnemies();
 
     // World Event System (Living Ocean)
@@ -1709,6 +1713,45 @@ class Game {
     this.isCoop = true;
     this._startGame();
     this._initCoopInGame();
+
+    // HOST: broadcast world layout so the client can align its world.
+    // Use a 3s delay: the client triggers _launchCoopGame() 1.2s after connecting,
+    // and needs ~0.5s for _startGame() + _initCoopInGame() before the callback is wired.
+    // Also send again at 8s as a backup in case the first message was missed.
+    if (this.mp?.isHost) {
+      // ACK-based retry loop (Phase 3 — AAA world layout handshake).
+      // Retries up to MAX_RETRIES times at RETRY_INTERVAL ms until the client ACKs.
+      let _layoutAcked = false;
+      let _layoutAttempt = 0;
+      const MAX_RETRIES    = 10;
+      const RETRY_INTERVAL = 2000;
+
+      const _trySendLayout = () => {
+        if (_layoutAcked || _layoutAttempt >= MAX_RETRIES) {
+          if (_layoutAttempt >= MAX_RETRIES && !_layoutAcked) {
+            console.warn('[MP] World layout: max retries reached without ACK — client may be misaligned.');
+            this.hud?.toast('⚠️ World may be misaligned. Both players should reconnect.', 'warning');
+          }
+          return;
+        }
+        _layoutAttempt++;
+        if (this._islands && this.loot) {
+          this.mp.sendWorldLayout(this._islands, this.loot.pieces);
+          console.log(`[MP] Sent WORLD_LAYOUT (attempt ${_layoutAttempt}/${MAX_RETRIES}):`, this._islands.length, 'islands');
+        }
+        setTimeout(_trySendLayout, RETRY_INTERVAL);
+      };
+
+      // First attempt after 2s (client needs time to init co-op callbacks)
+      setTimeout(_trySendLayout, 2000);
+
+      // Stop retrying when client ACKs
+      this.mp.onWorldLayoutAck = () => {
+        _layoutAcked = true;
+        console.log('[MP] World layout ACK received — sync complete after', _layoutAttempt, 'attempt(s).');
+        this.hud?.toast('⚓ World synced with First Mate!', 'success');
+      };
+    }
   }
 
   _initCoopInGame() {
@@ -1797,11 +1840,134 @@ class Game {
       this._showWorldLog(data.text);
     };
 
+    // ── AI sync: host broadcasts enemy positions, client receives and applies them ──
+    if (this.mp.isClient) {
+      // Client: receive AI state packets → push into jitter buffer (Phase 2 — smooth interp)
+      this.mp.onAIState = (packet) => {
+        this.ai?.pushNetworkStates(packet);
+      };
+
+      // Client: receive world layout → apply to local world → send ACK to host
+      this.mp.onWorldLayout = (data) => {
+        console.log('[MP] Received WORLD_LAYOUT:', data.islands?.length, 'islands,', data.loot?.length, 'loot');
+        this._applyWorldLayout(data);
+        // Phase 3 — ACK: tell host we successfully received the layout so it stops retrying
+        this.mp.sendWorldLayoutAck();
+      };
+
+      // Client: receive periodic world snapshots (economy + island states) from host
+      this.mp.onSyncWorld = (snap) => {
+        // Sync economy so both players' HUDs show shared resources
+        if (snap.gold !== undefined && this.economy) {
+          this.economy.resources.gold = snap.gold;
+          this.economy.resources.crew = snap.crew ?? this.economy.resources.crew;
+          this.economy.resources.wood = snap.wood ?? this.economy.resources.wood;
+        }
+        // Sync island capture states
+        if (snap.islands && this._islands) {
+          for (const snapIsl of snap.islands) {
+            const local = this._islands.find(i => i.id === snapIsl.id);
+            if (local) {
+              local.captured = snapIsl.captured;
+              local.owner    = snapIsl.owner;
+              local.hp       = snapIsl.hp ?? local.hp;
+            }
+          }
+        }
+        // Sync day/night cycle from host so both players see the same sky
+        if (snap.dayPhase !== undefined && this.sky) {
+          this.sky._dayPhase = snap.dayPhase;
+        }
+      };
+    }
+
+    if (this.mp.isHost) {
+      // Host: receive damage requests from client and apply to the authoritative ship
+      this.mp.onDamageRequest = (data) => {
+        const ship = this.ships?.get(data.id);
+        if (ship && ship.isSailing) {
+          ship.takeDamage(data.dmg);
+        }
+      };
+    }
+
+    // ── Client: route cannon hits on enemies through host (authoritative damage) ──
+    if (this.mp.isClient && this.combat) {
+      this.combat.onPlayerHitEnemy = (ship, damage) => {
+        this.mp.sendDamageRequest(ship.id, damage);
+        // Visual hit effect still plays locally (already handled by the collision loop)
+      };
+    }
+
     this.mp.onDisconnected = () => {
       const onlineEl = document.getElementById('coop-partner-online');
       if (onlineEl) { onlineEl.textContent = '● Offline'; onlineEl.classList.add('offline'); }
       this.hud?.toast('⚠️ First mate disconnected!', 'danger');
     };
+
+    // Protocol version mismatch — show a prominent warning toast
+    EventEmitter.once('mp:version_mismatch', ({ ours, theirs }) => {
+      this.hud?.toast(
+        `⚠️ Incompatible game version! You: v${ours} / Partner: v${theirs}. Both must refresh.`,
+        'danger',
+      );
+    });
+  }
+
+  /**
+   * CLIENT: Apply the world layout received from the host.
+   * Teleports each locally-generated island to the host's authoritative position,
+   * then repositions loot to match.
+   * @param {{ islands: Array, loot: Array }} data
+   */
+  _applyWorldLayout(data) {
+    if (!this._islands || !data?.islands) return;
+
+    const hostIslands = data.islands;
+
+    // Reposition each island group to match host
+    for (let i = 0; i < this._islands.length && i < hostIslands.length; i++) {
+      const localIsl  = this._islands[i];
+      const hostIsl   = hostIslands[i];
+
+      // Move the Three.js group
+      localIsl.group.position.set(hostIsl.x, 3, hostIsl.z);
+
+      // Update position data object (used by AI, combat, etc.)
+      localIsl.position.set(hostIsl.x, 0, hostIsl.z);
+
+      // Update collision radius to match host (sandScale may differ)
+      localIsl.collisionRadius = hostIsl.collisionRadius;
+
+      // Sync fortified flag (affects cannon behaviour)
+      localIsl.fortified = hostIsl.fortified;
+    }
+
+    // Update IslandSystem's internal island reference array so capture/cannon
+    // logic works at the right positions
+    if (this.islandSys) {
+      // IslandSystem reads from this._islands directly which we've just updated
+      // Rebuild combat system's island reference
+      this.combat?.setIslands(this._islands);
+      this.ships?.setIslands(this._islands);
+    }
+
+    // Also update the AI system's cached island positions
+    if (this.ai) {
+      this.ai._islands = this._islands;
+      this.ai._islandPositions = this._islands.map(isl => ({
+        x: isl.position.x,
+        z: isl.position.z,
+      }));
+    }
+
+    // Reposition loot to match host
+    if (data.loot && this.loot) {
+      this.loot.repositionAll(data.loot);
+    }
+
+    console.log('[CLIENT] World layout applied — islands repositioned to match host.');
+    this.hud?.toast('🗺️ World synced with Captain!', 'success');
   }
 
   _showWorldLog(text) {
@@ -1945,7 +2111,12 @@ class Game {
 
     // ── AI enemies ───────────────────────────────────────────────────────────
     if (this.playerShip?.isAlive) {
-      this.ai.update(delta, this.playerShip.group.position);
+      // In co-op CLIENT mode, the AI system has no active agents — run jitter-buffer interp instead
+      if (this.isCoop && this.mp?.isClient) {
+        this.ai.tickJitterInterp(performance.now());
+      } else {
+        this.ai.update(delta, this.playerShip.group.position);
+      }
     }
 
     // ── Island capture + passive income ──────────────────────────────────────
@@ -2153,12 +2324,14 @@ class Game {
 
     // ── Co-op per-frame ───────────────────────────────────────────────────────
     if (this.isCoop && this.mp) {
-      // Tick the MP system (sends ship state, world snapshots, rescue timer)
+      // Tick the MP system (sends ship state, world snapshots, rescue timer, AI state)
       this.mp.update(
         delta,
         this.playerShip,
         this.mp.isHost ? this.economy   : null,
         this.mp.isHost ? this._islands  : null,
+        this.mp.isHost ? this.ai?.getSerializableState() : null,
+        this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0,
       );
 
       // Update partner HUD

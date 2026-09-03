@@ -6,35 +6,54 @@
  *            Broadcasts world state to client.
  *   CLIENT — sends own ship inputs, receives world state.
  *
- * Message protocol (compact string codes to minimise bandwidth):
- *   SS  — ShipState     (position, rotation, velocity)   @60Hz
- *   CF  — CannonFire    (spawn cannonball on both ends)
- *   DE  — DamageEvent   (authoritative hit from host)
- *   PP  — PerkPickup    (orb collected)
- *   PM  — PingMap       (map ping from partner)
- *   FL  — Flare         (distress flare)
- *   QC  — QuickChat     (radial message)
- *   RQ  — RescueRequest (partner sinking, start timer)
- *   RR  — RescueResolve (rescued / failed)
- *   WE  — WorldEvent    (host→client world log message)
- *   SY  — SyncWorld     (full world state snapshot on join)
+ * Transport (v2 — AAA binary protocol):
+ *   High-frequency messages (SS, AI, CF, DE, DR) are packed as compact
+ *   ArrayBuffer binary packets via NetPacker (~16 bytes vs ~150 bytes JSON).
+ *   Infrequent/complex messages (PP, PM, FL, QC, RQ, RR, WE, SY, WL) use
+ *   a JSON envelope wrapped in a binary container (type byte 0xFF).
+ *
+ *   Binary type IDs are defined in NetPacker.TYPE.
+ *   JSON message codes:
+ *     PP  — PerkPickup    (orb collected)
+ *     PM  — PingMap       (map ping from partner)
+ *     FL  — Flare         (distress flare)
+ *     QC  — QuickChat     (radial message)
+ *     RQ  — RescueRequest (partner sinking, start timer)
+ *     RR  — RescueResolve (rescued / failed)
+ *     WE  — WorldEvent    (host→client world log message)
+ *     SY  — SyncWorld     (full world state snapshot on join)
+ *     WL  — WorldLayout   (host→client island/loot positions, once on join)
+ *     VH  — VersionHello  (first packet after connection open — version check)
  */
 
 import EventEmitter from '../utils/EventEmitter.js';
+import * as NetPacker from '../utils/NetPacker.js';
 
-// ── Message type constants ────────────────────────────────────────────────────
+// ── Protocol version ─────────────────────────────────────────────────────────
+// Increment when the binary packet layout changes so incompatible clients
+// display a clear error instead of silently corrupting state.
+export const PROTOCOL_VERSION = NetPacker.PROTOCOL_VERSION;
+
+// ── Message type constants (JSON envelope codes) ──────────────────────────────
+// High-frequency messages now use binary typeIds (see NetPacker.TYPE).
+// These string codes are only used in the JSON_ENVELOPE fallback path.
 export const MSG = {
-  SHIP_STATE:      'SS',
-  CANNON_FIRE:     'CF',
-  DAMAGE_EVENT:    'DE',
-  PERK_PICKUP:     'PP',
-  PING_MAP:        'PM',
-  FLARE:           'FL',
-  QUICK_CHAT:      'QC',
-  RESCUE_REQUEST:  'RQ',
-  RESCUE_RESOLVE:  'RR',
-  WORLD_EVENT:     'WE',
-  SYNC_WORLD:      'SY',
+  PERK_PICKUP:      'PP',
+  PING_MAP:         'PM',
+  FLARE:            'FL',
+  QUICK_CHAT:       'QC',
+  RESCUE_REQUEST:   'RQ',
+  RESCUE_RESOLVE:   'RR',
+  WORLD_EVENT:      'WE',
+  SYNC_WORLD:       'SY',
+  WORLD_LAYOUT:     'WL',
+  VERSION_HELLO:    'VH',
+  // Legacy aliases kept so external callers don't break
+  SHIP_STATE:       'SS',
+  CANNON_FIRE:      'CF',
+  DAMAGE_EVENT:     'DE',
+  AI_STATE:         'AI',
+  DMG_REQUEST:      'DR',
 };
 
 // ── Quick-chat messages ───────────────────────────────────────────────────────
@@ -52,6 +71,7 @@ export const QUICK_CHAT = [
 // ── Sync rates ────────────────────────────────────────────────────────────────
 const SHIP_SYNC_RATE    = 1 / 20;   // 20Hz position sync (sufficient with dead reckoning)
 const WORLD_SYNC_RATE   = 5.0;      // Full world snapshot every 5 seconds
+const AI_SYNC_RATE      = 1 / 10;   // 10Hz enemy state sync (positions lerped on client)
 
 export class MultiplayerSystem {
   /**
@@ -70,6 +90,7 @@ export class MultiplayerSystem {
 
     this._syncTimer      = 0;
     this._worldSyncTimer = 0;
+    this._aiSyncTimer    = 0;
 
     // Dead-reckoning state for partner ship
     this.partnerState = {
@@ -98,6 +119,13 @@ export class MultiplayerSystem {
     this.onRescueResolve    = null;   // (success) => void
     this.onWorldEvent       = null;   // (text) => void
     this.onSyncWorld        = null;   // (snapshot) => void
+    this.onAIState          = null;   // (stateArray) => void  — client receives enemy positions
+    this.onDamageRequest    = null;   // ({id, dmg}) => void   — host receives hit request
+    this.onWorldLayout      = null;   // (layoutData) => void  — client receives island/loot layout
+    this.onWorldLayoutAck   = null;   // () => void            — host receives client ACK for world layout
+
+    // Version mismatch flag — set when partner runs an incompatible protocol version
+    this._versionMismatch = false;
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -153,7 +181,8 @@ export class MultiplayerSystem {
 
         this._peer.on('open', () => {
           this._reportStatus('🔗 Reaching your captain...');
-          const conn = this._peer.connect(this.roomCode, { reliable: true });
+          // binary serialization mode — PeerJS passes ArrayBuffer directly
+          const conn = this._peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
           this._conn = conn;
           this._setupConnection(conn);
 
@@ -280,17 +309,22 @@ export class MultiplayerSystem {
       console.warn('[MP] Could not load TURN config from DB, using hardcoded fallback:', err.message);
     }
 
-    // Last-resort hardcoded fallback — same credential as DB
-    const u = 'eca365ad7de349e8a584bba7';
-    const c = '375mIYZBz5LYCsyt';
+    // Last-resort hardcoded fallback — reads from .env.local (VITE_TURN_*)
+    // If env vars are missing, STUN-only is used (may fail on strict NATs).
+    const u = import.meta.env.VITE_TURN_USERNAME  || '';
+    const c = import.meta.env.VITE_TURN_CREDENTIAL || '';
+    if (!u || !c) {
+      console.warn('[MP] TURN credentials not found in env — using STUN only. Co-op may fail on strict NATs.');
+      return stunOnly;
+    }
     return [
       ...stunOnly,
       { urls: 'turn:global.relay.metered.ca:3478?transport=udp', username: u, credential: c },
       { urls: 'turn:global.relay.metered.ca:3478?transport=tcp', username: u, credential: c },
-      { urls: 'turn:global.relay.metered.ca:443?transport=tcp', username: u, credential: c },
+      { urls: 'turn:global.relay.metered.ca:443?transport=tcp',  username: u, credential: c },
       { urls: 'turns:global.relay.metered.ca:443?transport=tcp', username: u, credential: c },
-      { urls: 'turn:in.relay.metered.ca:3478?transport=udp', username: u, credential: c },
-      { urls: 'turn:in.relay.metered.ca:443?transport=tcp', username: u, credential: c },
+      { urls: 'turn:in.relay.metered.ca:3478?transport=udp',     username: u, credential: c },
+      { urls: 'turn:in.relay.metered.ca:443?transport=tcp',      username: u, credential: c },
     ];
   }
 
@@ -324,12 +358,15 @@ export class MultiplayerSystem {
 
     conn.on('open', () => {
       this.connected = true;
+      // Send version handshake as the very first packet so both sides can
+      // detect a protocol mismatch before any game state is exchanged.
+      this._sendJSON(MSG.VERSION_HELLO, { v: PROTOCOL_VERSION, role: this.role });
       this.onConnected?.();
       EventEmitter.emit('mp:connected');
     });
 
     conn.on('data', (raw) => {
-      this._handleMessage(raw);
+      this._handleBinary(raw);
     });
 
     conn.on('close', () => {
@@ -343,159 +380,304 @@ export class MultiplayerSystem {
     });
   }
 
-  // ── Message handling ───────────────────────────────────────────────────────
+  // ── Message handling (binary dispatch) ────────────────────────────────────
 
-  _handleMessage(raw) {
+  /**
+   * Primary receive handler. Accepts ArrayBuffer (binary packets) or
+   * legacy strings/objects (graceful fallback for old clients).
+   */
+  _handleBinary(raw) {
     try {
-      const msg = (typeof raw === 'string') ? JSON.parse(raw) : raw;
-      switch (msg.t) {
-        case MSG.SHIP_STATE:
-          this.partnerState = msg.d;
-          this.onPartnerShipState?.(msg.d);
-          break;
-        case MSG.CANNON_FIRE:
-          this.onCannonFire?.(msg.d);
-          break;
-        case MSG.DAMAGE_EVENT:
-          this.onDamageEvent?.(msg.d);
-          break;
-        case MSG.PERK_PICKUP:
-          this.onPerkPickup?.(msg.d);
-          break;
-        case MSG.PING_MAP:
-          this.onPingMap?.(msg.d);
-          EventEmitter.emit('mp:ping', msg.d);
-          break;
-        case MSG.FLARE:
-          this.onFlare?.();
-          EventEmitter.emit('mp:flare', msg.d);
-          break;
-        case MSG.QUICK_CHAT:
-          this.onQuickChat?.(msg.d);
-          EventEmitter.emit('mp:quickchat', msg.d);
-          break;
-        case MSG.RESCUE_REQUEST:
-          this._rescueTimer  = msg.d.timer ?? 60;
-          this._rescueActive = true;
-          this.onRescueRequest?.(msg.d);
-          EventEmitter.emit('mp:rescue_request', msg.d);
-          break;
-        case MSG.RESCUE_RESOLVE:
-          this._rescueActive = false;
-          this.onRescueResolve?.(msg.d);
-          EventEmitter.emit('mp:rescue_resolve', msg.d);
-          break;
-        case MSG.WORLD_EVENT:
-          this.onWorldEvent?.(msg.d);
-          EventEmitter.emit('mp:world_event', msg.d);
-          break;
-        case MSG.SYNC_WORLD:
-          this.onSyncWorld?.(msg.d);
-          EventEmitter.emit('mp:sync_world', msg.d);
-          break;
-        default:
-          break;
+      // ── Binary path (v2 protocol) ──────────────────────────────────────────
+      if (raw instanceof ArrayBuffer) {
+        if (raw.byteLength === 0) return;
+        const { typeId, payload } = NetPacker.unpack(raw);
+
+        switch (typeId) {
+          // ── High-frequency binary messages ─────────────────────────────────
+          case NetPacker.TYPE.SHIP_STATE:
+            this.partnerState = payload;
+            this.onPartnerShipState?.(payload);
+            break;
+
+          case NetPacker.TYPE.AI_STATE:
+            // payload = { ts: number, ships: Array } — include receive timestamp
+            // for jitter buffer. Attach receiveTs so AISystem can use it.
+            payload.receiveTs = performance.now();
+            this.onAIState?.(payload);
+            EventEmitter.emit('mp:ai_state', payload);
+            break;
+
+          case NetPacker.TYPE.CANNON_FIRE:
+            this.onCannonFire?.(payload);
+            break;
+
+          case NetPacker.TYPE.DAMAGE_EVENT:
+            this.onDamageEvent?.(payload);
+            break;
+
+          case NetPacker.TYPE.DMG_REQUEST:
+            this.onDamageRequest?.(payload);
+            EventEmitter.emit('mp:dmg_request', payload);
+            break;
+
+          case NetPacker.TYPE.WORLD_LAYOUT_ACK:
+            console.log('[MP] WORLD_LAYOUT_ACK received from client — stopping retries.');
+            this.onWorldLayoutAck?.();
+            EventEmitter.emit('mp:world_layout_ack');
+            break;
+
+          // ── JSON envelope (infrequent complex messages) ─────────────────────
+          case NetPacker.TYPE.JSON_ENVELOPE:
+            this._handleJSONEnvelope(payload);
+            break;
+
+          default:
+            console.warn('[MP] Unknown binary typeId:', typeId);
+        }
+        return;
       }
+
+      // ── Legacy fallback path (plain JSON string or object) ─────────────────
+      // Handles old clients that haven't updated yet.
+      const msg = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      this._handleJSONEnvelope(msg);
+
     } catch (e) {
-      console.warn('[MP] Bad message:', raw, e);
+      console.warn('[MP] Bad message:', e);
+    }
+  }
+
+  /** Handle decoded JSON envelope { t, d }. */
+  _handleJSONEnvelope(msg) {
+    if (!msg?.t) return;
+    switch (msg.t) {
+      case MSG.VERSION_HELLO: {
+        const theirVersion = msg.d?.v ?? 1;
+        if (theirVersion !== PROTOCOL_VERSION) {
+          this._versionMismatch = true;
+          const err = `Protocol mismatch! You are on v${PROTOCOL_VERSION}, partner is on v${theirVersion}. Please both refresh the game.`;
+          console.error('[MP]', err);
+          EventEmitter.emit('mp:version_mismatch', { ours: PROTOCOL_VERSION, theirs: theirVersion });
+        } else {
+          console.log('[MP] Protocol version handshake OK — v' + PROTOCOL_VERSION);
+        }
+        break;
+      }
+      case MSG.PERK_PICKUP:
+        this.onPerkPickup?.(msg.d);
+        break;
+      case MSG.PING_MAP:
+        this.onPingMap?.(msg.d);
+        EventEmitter.emit('mp:ping', msg.d);
+        break;
+      case MSG.FLARE:
+        this.onFlare?.();
+        EventEmitter.emit('mp:flare', msg.d);
+        break;
+      case MSG.QUICK_CHAT:
+        this.onQuickChat?.(msg.d);
+        EventEmitter.emit('mp:quickchat', msg.d);
+        break;
+      case MSG.RESCUE_REQUEST:
+        this._rescueTimer  = msg.d?.timer ?? 60;
+        this._rescueActive = true;
+        this.onRescueRequest?.(msg.d);
+        EventEmitter.emit('mp:rescue_request', msg.d);
+        break;
+      case MSG.RESCUE_RESOLVE:
+        this._rescueActive = false;
+        this.onRescueResolve?.(msg.d);
+        EventEmitter.emit('mp:rescue_resolve', msg.d);
+        break;
+      case MSG.WORLD_EVENT:
+        this.onWorldEvent?.(msg.d);
+        EventEmitter.emit('mp:world_event', msg.d);
+        break;
+      case MSG.SYNC_WORLD:
+        this.onSyncWorld?.(msg.d);
+        EventEmitter.emit('mp:sync_world', msg.d);
+        break;
+      case MSG.WORLD_LAYOUT:
+        this.onWorldLayout?.(msg.d);
+        EventEmitter.emit('mp:world_layout', msg.d);
+        break;
+      // Legacy JSON paths for old binary messages (backward compat)
+      case 'SS':
+        this.partnerState = msg.d;
+        this.onPartnerShipState?.(msg.d);
+        break;
+      case 'AI':
+        this.onAIState?.({ ships: msg.d, receiveTs: performance.now() });
+        break;
+      case 'CF':
+        this.onCannonFire?.(msg.d);
+        break;
+      case 'DE':
+        this.onDamageEvent?.(msg.d);
+        break;
+      case 'DR':
+        this.onDamageRequest?.(msg.d);
+        break;
+      default:
+        break;
     }
   }
 
   // ── Send helpers ───────────────────────────────────────────────────────────
 
-  _send(type, data) {
+  /**
+   * Send a raw ArrayBuffer binary packet.
+   * Used for high-frequency messages (ship state, AI state, cannon fire, damage).
+   */
+  _sendBin(buffer) {
     if (!this._conn || !this.connected) return;
     try {
-      this._conn.send({ t: type, d: data });
+      this._conn.send(buffer);
     } catch (e) {
-      // Ignore send errors on unreliable channel
+      // Ignore send errors (network blip) — next frame will retry
     }
   }
 
-  /** Send own ship state to partner. */
+  /**
+   * Send a JSON-encoded message wrapped in a binary envelope.
+   * Used for infrequent/complex messages (world events, perk pickups, chat etc.).
+   * @param {string} type  — MSG constant (e.g. MSG.FLARE)
+   * @param {*}      data  — JSON-serializable payload
+   */
+  _sendJSON(type, data) {
+    if (!this._conn || !this.connected) return;
+    try {
+      this._conn.send(NetPacker.packJSON(type, data));
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  /**
+   * @deprecated  Use _sendBin() / _sendJSON() directly.
+   * Kept for any external callers that still use the old API.
+   */
+  _send(type, data) { this._sendJSON(type, data); }
+
+  /** Send own ship state to partner — binary packed (16 bytes). */
   sendShipState(ship) {
-    const p = ship.group.position;
-    const v = ship.velocity;
-    this._send(MSG.SHIP_STATE, {
-      x:   parseFloat(p.x.toFixed(2)),
-      y:   parseFloat(p.y.toFixed(2)),
-      z:   parseFloat(p.z.toFixed(2)),
-      ry:  parseFloat(ship.group.rotation.y.toFixed(3)),
-      vx:  parseFloat(v.x.toFixed(2)),
-      vy:  parseFloat(v.y.toFixed(2)),
-      vz:  parseFloat(v.z.toFixed(2)),
-      hp:  Math.round(ship.health),
-      mhp: Math.round(ship.maxHealth),
-      thx: parseFloat(ship.thrust.toFixed(2)),
-    });
+    this._sendBin(NetPacker.packShipState(ship));
   }
 
-  /** Send cannon fire event. */
+  /** Send cannon fire event — binary packed (26 bytes). */
   sendCannonFire(posL, velL, posR, velR, ammo) {
-    this._send(MSG.CANNON_FIRE, {
-      pL: { x: posL.x, y: posL.y, z: posL.z },
-      vL: { x: velL.x, y: velL.y, z: velL.z },
-      pR: { x: posR.x, y: posR.y, z: posR.z },
-      vR: { x: velR.x, y: velR.y, z: velR.z },
-      a: ammo,
-    });
+    this._sendBin(NetPacker.packCannonFire(posL, velL, posR, velR, ammo));
   }
 
-  /** Send a damage event (host-authoritative). */
+  /** Send a damage event (host-authoritative) — binary packed (7 bytes). */
   sendDamageEvent(shipId, damage) {
-    this._send(MSG.DAMAGE_EVENT, { id: shipId, dmg: damage });
+    this._sendBin(NetPacker.packDamageEvent(shipId, damage));
   }
 
-  /** Send perk collected notification. */
+  /** Send perk collected notification — JSON envelope (infrequent). */
   sendPerkPickup(perkId) {
-    this._send(MSG.PERK_PICKUP, { id: perkId });
+    this._sendJSON(MSG.PERK_PICKUP, { id: perkId });
   }
 
-  /** Send a map ping. */
+  /** Send a map ping — JSON envelope. */
   sendPingMap(type, x, z) {
-    this._send(MSG.PING_MAP, { type, x: Math.round(x), z: Math.round(z) });
+    this._sendJSON(MSG.PING_MAP, { type, x: Math.round(x), z: Math.round(z) });
   }
 
-  /** Send a distress flare. */
+  /** Send a distress flare — JSON envelope. */
   sendFlare(x, z) {
-    this._send(MSG.FLARE, { x: Math.round(x), z: Math.round(z) });
+    this._sendJSON(MSG.FLARE, { x: Math.round(x), z: Math.round(z) });
   }
 
-  /** Send a quick-chat message. */
+  /** Send a quick-chat message — JSON envelope. */
   sendQuickChat(msgId) {
-    this._send(MSG.QUICK_CHAT, { id: msgId });
+    this._sendJSON(MSG.QUICK_CHAT, { id: msgId });
   }
 
-  /** Send rescue request (partner ship sinking). */
+  /** Send rescue request (partner ship sinking) — JSON envelope. */
   sendRescueRequest(x, z, timer = 60) {
-    this._send(MSG.RESCUE_REQUEST, { x: Math.round(x), z: Math.round(z), timer });
+    this._sendJSON(MSG.RESCUE_REQUEST, { x: Math.round(x), z: Math.round(z), timer });
   }
 
-  /** Send rescue resolve (rescued or failed). */
+  /** Send rescue resolve (rescued or failed) — JSON envelope. */
   sendRescueResolve(success) {
-    this._send(MSG.RESCUE_RESOLVE, { ok: success });
+    this._sendJSON(MSG.RESCUE_RESOLVE, { ok: success });
     this._rescueActive = false;
   }
 
-  /** Host → Client: world event text. */
+  /** Host → Client: world event text — JSON envelope. */
   sendWorldEvent(text) {
-    this._send(MSG.WORLD_EVENT, { text });
+    this._sendJSON(MSG.WORLD_EVENT, { text });
   }
 
-  /** Host → Client: full world snapshot (economy, island states). */
-  sendWorldSnapshot(economy, islands) {
-    const snap = {
-      gold:    economy.resources.gold,
-      crew:    economy.resources.crew,
-      wood:    economy.resources.wood,
+  /**
+   * Host → Client: send island positions and loot spawn data so both machines
+   * render the same world layout.
+   * Called ONCE immediately after the game starts on the host side.
+   * @param {Array}  islands   — this._islands from the game
+   * @param {Array}  lootPieces — loot._pieces from LootSystem
+   */
+  sendWorldLayout(islands, lootPieces) {
+    const data = {
       islands: islands.map(isl => ({
+        id:            isl.id,
+        x:             parseFloat(isl.position.x.toFixed(2)),
+        z:             parseFloat(isl.position.z.toFixed(2)),
+        sandScale:     parseFloat(isl.sandScale.toFixed(3)),
+        fortified:     isl.fortified,
+        collisionRadius: parseFloat(isl.collisionRadius.toFixed(2)),
+      })),
+      loot: lootPieces.map(p => ({
+        x: parseFloat(p.group.position.x.toFixed(2)),
+        z: parseFloat(p.group.position.z.toFixed(2)),
+      })),
+    };
+    this._sendJSON(MSG.WORLD_LAYOUT, data);
+  }
+
+  /**
+   * Host → Client: broadcast current enemy ship states — binary packed.
+   * Each ship takes 12 bytes vs ~50 bytes JSON. For 10 ships: 120B vs 500B.
+   * @param {Array<{id,cls,fac,x,z,ry,hp,mhp}>} aiShips — from AISystem.getSerializableState()
+   */
+  sendAIState(aiShips) {
+    this._sendBin(NetPacker.packAIState(aiShips));
+  }
+
+  /**
+   * Client → Host: request that the host applies damage to an enemy ship — binary packed.
+   * @param {string} shipId — the ship.id assigned by the host
+   * @param {number} damage — raw damage amount (host will re-apply armor)
+   */
+  sendDamageRequest(shipId, damage) {
+    this._sendBin(NetPacker.packDamageRequest(shipId, damage));
+  }
+
+  /**
+   * Client → Host: acknowledge receipt of world layout.
+   * Triggers host to stop retrying the WORLD_LAYOUT broadcast.
+   */
+  sendWorldLayoutAck() {
+    this._sendBin(NetPacker.packWorldLayoutAck());
+    console.log('[MP] Sent WORLD_LAYOUT_ACK to host.');
+  }
+
+  /** Host → Client: full world snapshot (economy, island states, sky time) — JSON envelope. */
+  sendWorldSnapshot(economy, islands, dayPhase = 0) {
+    const snap = {
+      gold:     economy.resources.gold,
+      crew:     economy.resources.crew,
+      wood:     economy.resources.wood,
+      dayPhase: parseFloat(dayPhase.toFixed(4)),  // sync day/night clock
+      islands:  islands.map(isl => ({
         id:       isl.id,
         captured: isl.captured,
         owner:    isl.owner,
         hp:       isl.hp,
       })),
     };
-    this._send(MSG.SYNC_WORLD, snap);
+    this._sendJSON(MSG.SYNC_WORLD, snap);
   }
 
   // ── Per-frame update ───────────────────────────────────────────────────────
@@ -504,10 +686,12 @@ export class MultiplayerSystem {
    * Call every frame. Handles periodic ship sync and rescue timer.
    * @param {number} delta
    * @param {Ship} playerShip
-   * @param {EconomySystem} [economy]  — host only
-   * @param {Array} [islands]          — host only
+   * @param {EconomySystem} [economy]    — host only
+   * @param {Array} [islands]            — host only
+   * @param {Array} [aiSerializedState]  — host only: output of AISystem.getSerializableState()
+   * @param {number} [dayPhase]          — host only: sky._dayPhase for day/night sync
    */
-  update(delta, playerShip, economy = null, islands = null) {
+  update(delta, playerShip, economy = null, islands = null, aiSerializedState = null, dayPhase = 0) {
     if (!this.connected) return;
 
     // ── Ship state sync ──────────────────────────────────────────────────────
@@ -524,7 +708,16 @@ export class MultiplayerSystem {
       this._worldSyncTimer -= delta;
       if (this._worldSyncTimer <= 0) {
         this._worldSyncTimer = WORLD_SYNC_RATE;
-        this.sendWorldSnapshot(economy, islands);
+        this.sendWorldSnapshot(economy, islands, dayPhase);
+      }
+    }
+
+    // ── Host: AI enemy state broadcast (10 Hz) ───────────────────────────────
+    if (this.isHost && aiSerializedState) {
+      this._aiSyncTimer -= delta;
+      if (this._aiSyncTimer <= 0) {
+        this._aiSyncTimer = AI_SYNC_RATE;
+        this.sendAIState(aiSerializedState);
       }
     }
 
