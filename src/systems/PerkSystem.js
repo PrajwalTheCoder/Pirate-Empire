@@ -56,7 +56,8 @@ export const PERKS = [
     color: '#ffcc44',
     rarity: 'common',
     apply(ship) {
-      ship._fireCooldownMult = (ship._fireCooldownMult ?? 1.0) * 0.80;
+      // Floor at 0.20 so fire rate can't be reduced to near-zero
+      ship._fireCooldownMult = Math.max(0.20, (ship._fireCooldownMult ?? 1.0) * 0.80);
     },
   },
   {
@@ -85,11 +86,12 @@ export const PERKS = [
     id:    'IRON_KEEL',
     icon:  '⚙️',
     name:  'Iron Keel',
-    desc:  '-20% Incoming Damage',
+    desc:  '-20% Incoming Damage (max 80%)',
     color: '#888888',
     rarity: 'epic',
     apply(ship) {
-      ship._damageReduction = (ship._damageReduction ?? 0) + 0.20;
+      // Hard cap at 0.80 — prevents negative damage (healing exploit)
+      ship._damageReduction = Math.min(0.80, (ship._damageReduction ?? 0) + 0.20);
     },
   },
   {

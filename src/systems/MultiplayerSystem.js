@@ -311,8 +311,9 @@ export class MultiplayerSystem {
 
     // Last-resort hardcoded fallback — reads from .env.local (VITE_TURN_*)
     // If env vars are missing, STUN-only is used (may fail on strict NATs).
-    const u = import.meta.env.VITE_TURN_USERNAME  || '';
-    const c = import.meta.env.VITE_TURN_CREDENTIAL || '';
+    const env = (typeof import.meta !== 'undefined' && import.meta.env) ? import.meta.env : {};
+    const u = env.VITE_TURN_USERNAME  || '';
+    const c = env.VITE_TURN_CREDENTIAL || '';
     if (!u || !c) {
       console.warn('[MP] TURN credentials not found in env — using STUN only. Co-op may fail on strict NATs.');
       return stunOnly;

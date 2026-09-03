@@ -106,8 +106,9 @@ export class Ship {
   /** Apply damage (reduced by armor). Returns actual damage dealt. */
   takeDamage(rawDamage) {
     if (this.state !== ShipState.SAILING) return 0;
-    // Apply iron keel damage reduction
-    const reducedDamage = rawDamage * (1 - (this._damageReduction ?? 0));
+    // Clamp _damageReduction to [0, 0.80] so stacking Iron Keel can't invert damage.
+    const dr = Math.min(0.80, Math.max(0, this._damageReduction ?? 0));
+    const reducedDamage = rawDamage * (1 - dr);
     const actual = Math.round(Math.max(1, reducedDamage - this.armor));
     this.health  = clamp(this.health - actual, 0, this.maxHealth);
 
@@ -475,7 +476,8 @@ export class Ship {
     // Remove original model, place wreck
     this.scene.remove(this.group);
 
-    const wreck = AssetLoader.get('ship-wreck');
+    // Clone wreck so each sunk ship gets its own independent mesh instance
+    const wreck = AssetLoader.get('ship-wreck').clone();
     wreck.position.set(this._sinkBaseX, -0.5, this._sinkBaseZ);
     wreck.rotation.y = this.group.rotation.y + randRange(-0.5, 0.5);
     this.scene.add(wreck);
@@ -547,8 +549,12 @@ export class ShipSystem {
     }
     this._resolveCollisions();
     if (this._islands) this._resolveIslandCollisions();
-    // Periodic cleanup of sunk ships
-    if (Math.random() < 0.01) this._cleanup();
+    // Deterministic cleanup: remove sunk ships every 5 s
+    this._cleanupTimer = (this._cleanupTimer ?? 0) + delta;
+    if (this._cleanupTimer >= 5.0) {
+      this._cleanupTimer = 0;
+      this._cleanup();
+    }
   }
 
   /** Provide island data for collision checks. Call once after world generation. */

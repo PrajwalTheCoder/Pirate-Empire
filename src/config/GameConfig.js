@@ -49,7 +49,8 @@ export const GameConfig = {
   AI_ATTACK_RANGE: 60,
   AI_LOSE_RANGE: 300,
   AI_FIRE_COOLDOWN: 3.0,
-  AI_RESPAWN_DELAY: 30,  AI_RETREAT_HEALTH_PCT: 0.20,   // retreat when HP drops below this fraction
+  AI_RESPAWN_DELAY: 30,
+  AI_RETREAT_HEALTH_PCT: 0.20,   // retreat when HP drops below this fraction
   // ── Building costs ────────────────────────────────────
   BUILD_COSTS: {
     WATCH_TOWER:  { gold: 500 },

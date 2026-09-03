@@ -5,3 +5,7 @@ node_modules/
 .env*.local
 .env
 .agents/
+
+# Local env (never commit credentials)
+.env.local
+.env*.local

@@ -207,6 +207,33 @@ export class LootSystem {
       }
     }
   }
+
+  /** Expose pieces so Host can serialise positions for WORLD_LAYOUT. */
+  get pieces() { return this._pieces; }
+
+  /**
+   * Co-op CLIENT: move all existing loot pieces to the positions provided by
+   * the Host's WORLD_LAYOUT message.  Extra local pieces are removed, missing
+   * pieces are left in-place (they'll respawn normally).
+   * @param {Array<{x:number,z:number}>} positions
+   */
+  repositionAll(positions) {
+    // Teleport existing pieces to host positions
+    for (let i = 0; i < this._pieces.length; i++) {
+      if (i < positions.length) {
+        const p = this._pieces[i];
+        const pos = positions[i];
+        p.group.position.x = pos.x;
+        p.group.position.z = pos.z;
+      } else {
+        // We have more pieces than host sent — remove extras
+        this._pieces[i].collected = true;
+        this._pieces[i].dispose();
+      }
+    }
+    // Remove disposed extras
+    this._pieces = this._pieces.filter(p => !p.collected);
+  }
 }
 
 export default LootSystem;

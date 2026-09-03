@@ -456,10 +456,24 @@ class Cannonball {
     this.mesh.position.copy(position);
     scene.add(this.mesh);
 
-    // Trail sprites
+    // Pre-allocate trail particle pool — avoid per-frame geometry/material creation
+    const TRAIL_POOL_SIZE = 8;
     this._trail  = [];
+    this._trailHead = 0;  // ring-buffer head index
     this._trailTimer = 0;
     this._trailColor = cfg.trailColor;
+    const colorHex = parseInt(String(cfg.trailColor ?? '#ff6600').replace('#', ''), 16);
+    const trailGeo = new THREE.SphereGeometry(0.12, 4, 4);  // shared geometry
+    for (let i = 0; i < TRAIL_POOL_SIZE; i++) {
+      const tMat = new THREE.MeshBasicMaterial({
+        color: colorHex, transparent: true, opacity: 0, depthWrite: false,
+      });
+      const t = new THREE.Mesh(trailGeo, tMat);
+      t._age    = 999;  // start expired so they're invisible
+      t._maxAge = 0.35;
+      scene.add(t);
+      this._trail.push(t);
+    }
   }
 
   /** @param {number} delta */
@@ -470,41 +484,38 @@ class Cannonball {
     this.velocity.y -= gravMult * delta;
     this.mesh.position.addScaledVector(this.velocity, delta);
 
-    // Emit trail particles for fire / chain shots
+    // Emit trail particles for fire / chain shots using pool ring-buffer
     if (this.ammoType !== AmmoType.ROUND) {
       this._trailTimer -= delta;
       if (this._trailTimer <= 0) {
         this._trailTimer = 0.04;
-        const tGeo = new THREE.SphereGeometry(0.12, 4, 4);
-        const tMat = new THREE.MeshBasicMaterial({
-          color: this._trailColor, transparent: true, opacity: 0.85, depthWrite: false,
-        });
-        const t = new THREE.Mesh(tGeo, tMat);
+        // Recycle the oldest slot in the ring buffer
+        const t = this._trail[this._trailHead];
+        this._trailHead = (this._trailHead + 1) % this._trail.length;
         t.position.copy(this.mesh.position);
         t._age = 0;
-        t._maxAge = 0.35;
-        this.scene.add(t);
-        this._trail.push(t);
+        t.scale.setScalar(1);
+        t.material.opacity = 0.85;
       }
     }
 
-    // Age trail
-    for (let i = this._trail.length - 1; i >= 0; i--) {
-      const t = this._trail[i];
+    // Age trail pool
+    for (const t of this._trail) {
+      if (t._age >= t._maxAge) continue;
       t._age += delta;
       t.material.opacity = Math.max(0, 0.85 * (1 - t._age / t._maxAge));
       t.scale.setScalar(1 + t._age * 3);
-      if (t._age >= t._maxAge) {
-        this.scene.remove(t);
-        this._trail.splice(i, 1);
-      }
     }
   }
 
   dispose() {
     this.scene.remove(this.mesh);
-    // Clean up any lingering trail particles
-    for (const t of this._trail) this.scene.remove(t);
+    // Return pooled trail particles to invisible state instead of removing them
+    for (const t of this._trail) {
+      t._age = 999;
+      t.material.opacity = 0;
+      this.scene.remove(t);
+    }
     this._trail.length = 0;
   }
 }
@@ -597,6 +608,15 @@ export class CombatSystem {
 
     // Build ammo selector UI widget
     this._buildAmmoUI();
+
+    /**
+     * Optional callback for co-op client mode.
+     * When set, called as onPlayerHitEnemy(ship, baseDamage) when the player's
+     * cannonball hits an enemy ship. If the callback returns true, local
+     * damage application is suppressed (damage is routed to host instead).
+     * @type {((ship: object, damage: number) => boolean) | null}
+     */
+    this.onPlayerHitEnemy = null;
   }
 
   // ── Ammo UI ────────────────────────────────────────────────────────────────
@@ -827,7 +847,16 @@ export class CombatSystem {
           const berserkerMult = ball.owner._berserkerActive ? 1.4 : 1.0;
           const baseDamage = (ball.owner.cannonPower + randRange(-5, 5)) * cfg.damageMult * berserkerMult;
 
-          ship.takeDamage(baseDamage);
+          // Co-op client: route player hits on enemies to the host for authoritative damage
+          const isClientPlayerHit = this.onPlayerHitEnemy
+            && ball.owner.faction === 'PLAYER'
+            && ship.faction !== 'PLAYER';
+          if (isClientPlayerHit) {
+            // Let the callback suppress local damage (returns true = handled by network)
+            this.onPlayerHitEnemy(ship, baseDamage);
+          } else {
+            ship.takeDamage(baseDamage);
+          }
           EventEmitter.emit('ship:hit', { ship, damage: baseDamage });
 
           // Knockback impulse — push ship away from impact point
