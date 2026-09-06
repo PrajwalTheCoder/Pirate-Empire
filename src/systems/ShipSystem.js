@@ -137,6 +137,23 @@ export class Ship {
    * @param {number} [windStrength=1.0]
    */
   update(delta, ocean, windAngle = 0, windStrength = 1.0) {
+    // Partner ghost ships are driven by network dead-reckoning — skip local physics
+    if (this._isPartnerGhost) {
+      // Just do wave bobbing so they look natural on the ocean surface
+      if (ocean && this.state === ShipState.SAILING) {
+        const px = this.group.position.x;
+        const pz = this.group.position.z;
+        const waveH = ocean.getHeightAt(px, pz);
+        this.group.position.y = lerp(this.group.position.y, waveH + 1.0, 0.12);
+        const dx = ocean.getHeightAt(px + 2, pz) - ocean.getHeightAt(px - 2, pz);
+        const dz = ocean.getHeightAt(px, pz + 2) - ocean.getHeightAt(px, pz - 2);
+        this.group.rotation.z = lerp(this.group.rotation.z, dx * 0.04, 0.08);
+        this.group.rotation.x = lerp(this.group.rotation.x, dz * 0.04, 0.08);
+      }
+      this._tickSmoke(delta);
+      this._tickBow(delta);
+      return;
+    }
     this.cannonCooldown = Math.max(0, this.cannonCooldown - delta);
 
     switch (this.state) {
@@ -566,6 +583,8 @@ export class ShipSystem {
   _resolveIslandCollisions() {
     for (const ship of this.alive) {
       if (!ship.isSailing) continue;
+      // Skip partner ghost ships — their position is driven by the network
+      if (ship._isPartnerGhost) continue;
       const sx = ship.group.position.x;
       const sz = ship.group.position.z;
 
@@ -608,6 +627,8 @@ export class ShipSystem {
         const a = ships[i];
         const b = ships[j];
         if (!a.isSailing || !b.isSailing) continue;
+        // Skip partner ghost ships — their position is driven by the network
+        if (a._isPartnerGhost || b._isPartnerGhost) continue;
 
         const dx   = a.group.position.x - b.group.position.x;
         const dz   = a.group.position.z - b.group.position.z;

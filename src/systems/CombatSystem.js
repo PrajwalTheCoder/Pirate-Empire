@@ -706,7 +706,10 @@ export class CombatSystem {
     const base  = ship.group.position.clone();
     base.y     += 1.2;
 
-    const speed = GameConfig.CANNONBALL_SPEED * cfg.speed;
+    const speedMult = (ship.faction !== 'PLAYER')
+      ? (GameConfig.AI_CANNONBALL_SPEED_FACTOR ?? 0.88)
+      : 1.0;
+    const speed = GameConfig.CANNONBALL_SPEED * cfg.speed * speedMult;
 
     const extraCount = ship._extraBalls ?? 0;
     const sideExtra = Math.floor(extraCount / 2); // e.g. 1 on each side for +2 extra balls
@@ -725,7 +728,11 @@ export class CombatSystem {
       }
 
       for (const angle of angles) {
-        const dir = right.clone().multiplyScalar(-1).applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+        const aiSpread = (ship.faction !== 'PLAYER')
+          ? (randRange(-GameConfig.AI_AIM_SPREAD, GameConfig.AI_AIM_SPREAD))
+          : 0;
+        const totalAngle = angle + aiSpread;
+        const dir = right.clone().multiplyScalar(-1).applyAxisAngle(new THREE.Vector3(0, 1, 0), totalAngle);
         const posL = base.clone().addScaledVector(right, -2.5);
         const velL = dir.multiplyScalar(speed).addScaledVector(ship.velocity, 0.5);
         this._spawn(posL, velL, ship, ammo);
@@ -746,7 +753,11 @@ export class CombatSystem {
       }
 
       for (const angle of angles) {
-        const dir = right.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+        const aiSpread = (ship.faction !== 'PLAYER')
+          ? (randRange(-GameConfig.AI_AIM_SPREAD, GameConfig.AI_AIM_SPREAD))
+          : 0;
+        const totalAngle = angle + aiSpread;
+        const dir = right.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), totalAngle);
         const posR = base.clone().addScaledVector(right, 2.5);
         const velR = dir.multiplyScalar(speed).addScaledVector(ship.velocity, 0.5);
         this._spawn(posR, velR, ship, ammo);

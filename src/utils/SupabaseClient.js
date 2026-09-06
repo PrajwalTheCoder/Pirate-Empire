@@ -1,4 +1,5 @@
 import { createClient } from '@supabase/supabase-js';
+import { FALLBACK_LEADERBOARD } from './leaderboardFallback.js';
 
 // ── Credentials are stored in .env.local — never hardcode secrets in source. ──
 // Vite exposes VITE_* vars via import.meta.env at build time.
@@ -211,6 +212,28 @@ export async function submitScore(
   }
 }
 
+const CACHE_KEY = 'pirate_leaderboard_cache';
+
+/**
+ * Get locally cached or fallback seed leaderboard data.
+ * @param {number} [limit=10]
+ * @returns {Array<object>}
+ */
+export function getLocalFallbackLeaderboard(limit = 10) {
+  try {
+    const cached = localStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed.slice(0, limit);
+      }
+    }
+  } catch (e) {
+    // Ignore localStorage error
+  }
+  return (FALLBACK_LEADERBOARD || []).slice(0, limit);
+}
+
 /**
  * Fetch top high scores from Supabase leaderboard.
  * @param {number} [limit=10]
@@ -229,8 +252,8 @@ export async function getLeaderboard(limit = 10) {
       10000, 'getLeaderboard'
     );
     if (error) {
-      console.error('[Supabase] ❌ getLeaderboard failed:', error.message, error);
-      return [];
+      console.warn('[Supabase] ⚠️ getLeaderboard failed (network/DNS). Using cached fallback:', error.message);
+      return getLocalFallbackLeaderboard(limit);
     }
 
     // Deduplicate by player_id (or player_name if player_id is null), keeping only the highest score (first occurrence)
@@ -245,13 +268,18 @@ export async function getLeaderboard(limit = 10) {
       }
     }
 
+    // Cache locally so offline or DNS hiccups never wipe leaderboard
+    try {
+      localStorage.setItem(CACHE_KEY, JSON.stringify(uniqueScores));
+    } catch (e) {}
+
     // Return only the requested number of entries
     const result = uniqueScores.slice(0, limit);
     console.log('[Supabase] ✅ Leaderboard fetched and deduplicated:', result.length, 'entries');
     return result;
   } catch (err) {
-    console.error('[Supabase] ❌ getLeaderboard threw:', err.message);
-    return [];
+    console.warn('[Supabase] ⚠️ getLeaderboard threw (network/DNS). Using cached fallback:', err.message);
+    return getLocalFallbackLeaderboard(limit);
   }
 }
 
@@ -377,8 +405,10 @@ export async function searchLeaderboard(nameQuery) {
       10000, 'searchLeaderboard'
     );
     if (error) {
-      console.error('[Supabase] ❌ searchLeaderboard failed:', error.message);
-      return [];
+      console.warn('[Supabase] ⚠️ searchLeaderboard failed, searching local fallback data:', error.message);
+      const clean = nameQuery.toLowerCase().trim();
+      const pool = getLocalFallbackLeaderboard(1000);
+      return pool.filter(p => (p.player_name || '').toLowerCase().includes(clean));
     }
     
     const uniqueScores = [];
@@ -393,8 +423,10 @@ export async function searchLeaderboard(nameQuery) {
     }
     return uniqueScores;
   } catch (err) {
-    console.error('[Supabase] ❌ searchLeaderboard threw:', err.message);
-    return [];
+    console.warn('[Supabase] ⚠️ searchLeaderboard threw, searching local fallback data:', err.message);
+    const clean = (nameQuery || '').toLowerCase().trim();
+    const pool = getLocalFallbackLeaderboard(1000);
+    return pool.filter(p => (p.player_name || '').toLowerCase().includes(clean));
   }
 }
 
@@ -443,8 +475,12 @@ export async function getPlayerRank(playerId, playerName) {
       record: record
     };
   } catch (err) {
-    console.error('[Supabase] ❌ getPlayerRank threw:', err.message);
-    return null;
+    console.warn('[Supabase] ⚠️ getPlayerRank threw, computing from local fallback data:', err.message);
+    const pool = getLocalFallbackLeaderboard(1000);
+    const rec = pool.find(p => (playerId && p.player_id === playerId) || (p.player_name === playerName));
+    if (!rec) return null;
+    const rank = pool.filter(p => (p.score || 0) > (rec.score || 0)).length + 1;
+    return { rank, record: rec };
   }
 }
 

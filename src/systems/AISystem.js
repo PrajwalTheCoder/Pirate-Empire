@@ -1,15 +1,15 @@
 /**
- * AISystem — enemy ship state machines.
+ * AISystem â€” enemy ship state machines.
  *
- * States:  PATROL → ALERT → CHASE → ATTACK → RETREAT → PATROL
- *                                                  ↗ RAID ↗
+ * States:  PATROL â†’ ALERT â†’ CHASE â†’ ATTACK â†’ RETREAT â†’ PATROL
+ *                                                  â†— RAID â†—
  *
  * Three AI personalities drive behaviour:
- *   NAVY     — standard patrol/alert/chase/attack cycle, retreats at low HP
- *   MERCHANT — only patrols (island-to-island), flees immediately on detection
- *   HUNTER   — aggressive boss; skips ALERT, extended ranges, fast fire rate
+ *   NAVY     â€” standard patrol/alert/chase/attack cycle, retreats at low HP
+ *   MERCHANT â€” only patrols (island-to-island), flees immediately on detection
+ *   HUNTER   â€” aggressive boss; skips ALERT, extended ranges, fast fire rate
  *
- * Destroyed ships respawn after a delay (HUNTER waits 3× longer).
+ * Destroyed ships respawn after a delay (HUNTER waits 3Ã— longer).
  */
 import * as THREE from 'three';
 import EventEmitter from '../utils/EventEmitter.js';
@@ -17,10 +17,10 @@ import GameConfig   from '../config/GameConfig.js';
 import { Faction, FactionShipClass, FactionPersonality, ShipStats } from '../config/ShipConfig.js';
 import { lerp, randRange, dist2D, angleTo, wrapAngle } from '../utils/MathUtils.js';
 
-// ─── AI States ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ AI States â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const AIState = { PATROL: 0, ALERT: 1, CHASE: 2, ATTACK: 3, RETREAT: 4, RAID: 5 };
 
-// ─── Per-personality tuning ────────────────────────────────────────────────────
+// â”€â”€â”€ Per-personality tuning â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 const PersonalityConfig = {
   NAVY: {
     detectRange:  GameConfig.AI_DETECT_RANGE,
@@ -47,30 +47,30 @@ const PersonalityConfig = {
     chaseRange:   150,
     attackRange:  50,
     loseRange:    256,
-    fireCooldown: 2.0,
+    fireCooldown: 2.8,    // rebalanced â€” was 2.0, fairer for players
     islandBias:   0.60,   // patrols near islands too
     skipsAlert:   true,
     fleeOnly:     false,
   },
 };
 
-// ─── AI Agent ──────────────────────────────────────────────────────────────────
+// â”€â”€â”€ AI Agent â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // ANGLE MATH NOTE
-// ───────────────
-// Three.js Y-rotation θ produces forward vector (-sinθ, 0, -cosθ).
-// angleTo(a, b) = atan2(b.x-a.x, b.z-a.z) = φ.
-// At rotation.y = φ the ship faces OPPOSITE to b (away from target).
-// At rotation.y = φ + π the ship faces TOWARD b.
+// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// Three.js Y-rotation Î¸ produces forward vector (-sinÎ¸, 0, -cosÎ¸).
+// angleTo(a, b) = atan2(b.x-a.x, b.z-a.z) = Ï†.
+// At rotation.y = Ï† the ship faces OPPOSITE to b (away from target).
+// At rotation.y = Ï† + Ï€ the ship faces TOWARD b.
 //
-// Therefore: diff = wrapAngle(angleTo(a,b) + π − rotation.y)
-//            → when diff=0 ship faces target, positive diff = turn left.
+// Therefore: diff = wrapAngle(angleTo(a,b) + Ï€ âˆ’ rotation.y)
+//            â†’ when diff=0 ship faces target, positive diff = turn left.
 //
 // Consequences for manual angle composition:
-//   • "toward target"   = angleTo + π
-//   • "away from target"= angleTo          (angleTo without +π)
-//   • "broadside right" = angleTo + π + π/2
-//   • "toward centre"   = atan2(pos.x, pos.z)   (NOT negated)
+//   â€¢ "toward target"   = angleTo + Ï€
+//   â€¢ "away from target"= angleTo          (angleTo without +Ï€)
+//   â€¢ "broadside right" = angleTo + Ï€ + Ï€/2
+//   â€¢ "toward centre"   = atan2(pos.x, pos.z)   (NOT negated)
 //
 class AIAgent {
   /**
@@ -103,7 +103,7 @@ class AIAgent {
   // Night-effect range multiplier, managed by AISystem
   static nightMultiplier = 1.0;
 
-  // ── Waypoint selection ────────────────────────────────────────────────────
+  // â”€â”€ Waypoint selection â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   _newWaypoint() {
     const half = GameConfig.WORLD_SIZE / 2 - 120; // keep 120 units clear of border
 
@@ -126,7 +126,7 @@ class AIAgent {
     }
   }
 
-  // ── Main tick ─────────────────────────────────────────────────────────────
+  // â”€â”€ Main tick â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   update(delta, playerPos, combat) {
     if (!this.ship.isSailing) return;
 
@@ -154,7 +154,7 @@ class AIAgent {
       ship.speed = baseStats.speed * repSpeedBoost;
     }
 
-    // ── Border recovery — force waypoint toward centre and patrol ─────────
+    // â”€â”€ Border recovery â€” force waypoint toward centre and patrol â”€â”€â”€â”€â”€â”€â”€â”€â”€
     const BORDER = GameConfig.WORLD_SIZE / 2 - 60;
     if (Math.abs(pos.x) > BORDER || Math.abs(pos.z) > BORDER) {
       this._waypoint.set(
@@ -167,7 +167,7 @@ class AIAgent {
       }
     }
 
-    // ── State transitions ─────────────────────────────────────────────────
+    // â”€â”€ State transitions â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     // Effective detect range: halved at night (less visibility) + doubled when angered
     const DR = cfg.detectRange
       * AIAgent.nightMultiplier
@@ -257,7 +257,7 @@ class AIAgent {
         break;
     }
 
-    // ── Behaviour ─────────────────────────────────────────────────────────
+    // â”€â”€ Behaviour â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     switch (this.state) {
       case AIState.PATROL:  this._doPatrol(delta);                    break;
       case AIState.ALERT:   this._doAlert(delta, playerPos);          break;
@@ -268,7 +268,7 @@ class AIAgent {
     }
   }
 
-  // ── Behaviours ────────────────────────────────────────────────────────────
+  // â”€â”€ Behaviours â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   _doPatrol(delta) {
     const ship = this.ship;
     ship.thrust = GameConfig.AI_PATROL_SPEED_FACTOR;
@@ -299,18 +299,20 @@ class AIAgent {
 
   _doAttack(delta, playerPos, combat) {
     const ship = this.ship;
-    // "toward player" = angleTo + π  (see angle-math note at top of class)
-    // broadside       = toward player + π/2
+    // "toward player" = angleTo + Ï€  (see angle-math note at top of class)
+    // broadside       = toward player + Ï€/2
     const toward    = angleTo(ship.group.position, playerPos) + Math.PI;
     const broadside = toward + Math.PI / 2;
     const diff      = wrapAngle(broadside - ship.group.rotation.y);
-    ship.steering   = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.5);
+    ship.steering   = Math.sign(diff) * Math.min(1, Math.abs(diff) * 1.8);
     ship.thrust     = GameConfig.AI_PATROL_SPEED_FACTOR * 0.7;
 
     this._fireCooldown -= delta;
     if (this._fireCooldown <= 0) {
       this._fireCooldown = this._cfg.fireCooldown + randRange(-0.5, 0.5);
-      combat.fireCannons(ship);
+      if (Math.abs(diff) < 0.45) {
+        combat.fireCannons(ship);
+      }
     }
   }
 
@@ -320,9 +322,9 @@ class AIAgent {
     const BORDER     = GameConfig.WORLD_SIZE / 2 - 80;
     const nearBorder = Math.abs(pos.x) > BORDER || Math.abs(pos.z) > BORDER;
 
-    // Near border → face toward centre.  atan2(pos.x, pos.z) gives the correct
-    // rotation.y at which forward = (-sinθ, 0, -cosθ) points toward origin.
-    // Away from player → angleTo without +π gives "facing away" (see class note).
+    // Near border â†’ face toward centre.  atan2(pos.x, pos.z) gives the correct
+    // rotation.y at which forward = (-sinÎ¸, 0, -cosÎ¸) points toward origin.
+    // Away from player â†’ angleTo without +Ï€ gives "facing away" (see class note).
     const targetAngle = nearBorder
       ? Math.atan2(pos.x, pos.z)
       : angleTo(pos, playerPos);
@@ -344,27 +346,29 @@ class AIAgent {
       ship.thrust = GameConfig.AI_CHASE_SPEED_FACTOR;
       this._steerToward(islePos, delta, 1.0);
     } else {
-      // Within range — broadside and fire (same formula as _doAttack)
+      // Within range â€” broadside and fire (same formula as _doAttack)
       const toward    = angleTo(ship.group.position, islePos) + Math.PI;
       const broadside = toward + Math.PI / 2;
       const diff      = wrapAngle(broadside - ship.group.rotation.y);
-      ship.steering   = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.5);
+      // Tuned: 1.8 factor so AI turns slower during raids
+      ship.steering   = Math.sign(diff) * Math.min(1, Math.abs(diff) * 1.8);
       ship.thrust     = GameConfig.AI_PATROL_SPEED_FACTOR * 0.4;
 
       this._fireCooldown -= delta;
       if (this._fireCooldown <= 0) {
         this._fireCooldown = this._cfg.fireCooldown + randRange(-0.5, 0.5);
-        combat.fireCannons(ship);
+        // Broadside alignment guard
+        if (Math.abs(diff) < 0.45) { combat.fireCannons(ship); }
       }
     }
   }
 
-  // ── Helpers ───────────────────────────────────────────────────────────────
+  // â”€â”€ Helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   /**
    * Steer the ship to face toward `target`.
    * The crucial +Math.PI corrects for the angleTo/forward-vector convention
    * mismatch: angleTo gives the angle at which the ship faces AWAY from target;
-   * adding π makes diff=0 when the ship faces TOWARD target.
+   * adding Ï€ makes diff=0 when the ship faces TOWARD target.
    */
   _steerToward(target, _delta, factor) {
     const ship = this.ship;
@@ -386,13 +390,13 @@ class AIAgent {
   }
 }
 
-// ─── AI SYSTEM ─────────────────────────────────────────────────────────────────
+// â”€â”€â”€ AI SYSTEM â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 export class AISystem {
   /**
    * @param {ShipSystem}      shipSystem
    * @param {CombatSystem}    combatSystem
-   * @param {object[]}        islands      — island data objects with .x/.z position
-   * @param {object|null}     [game]       — optional Game reference for story/reputation access
+   * @param {object[]}        islands      â€” island data objects with .x/.z position
+   * @param {object|null}     [game]       â€” optional Game reference for story/reputation access
    */
   constructor(shipSystem, combatSystem, islands = [], game = null) {
     this._shipSystem   = shipSystem;
@@ -406,27 +410,27 @@ export class AISystem {
     /** @type {AIAgent[]} */
     this._agents       = [];
     this._respawnQueue = [];
-    /** @type {Object.<string,number>} faction → seconds remaining angry */
+    /** @type {Object.<string,number>} faction â†’ seconds remaining angry */
     this._angeredFactions = {};
 
     /**
      * Sync mode for co-op:
-     *   'STANDALONE' — single-player, normal behaviour (default)
-     *   'HOST'       — runs full AI, serializes state for broadcast
-     *   'CLIENT'     — no local spawning; applies network state from host
+     *   'STANDALONE' â€” single-player, normal behaviour (default)
+     *   'HOST'       â€” runs full AI, serializes state for broadcast
+     *   'CLIENT'     â€” no local spawning; applies network state from host
      * @type {'STANDALONE'|'HOST'|'CLIENT'}
      */
     this.syncMode = 'STANDALONE';
 
     /**
      * Client-only: pool of ghost ships keyed by host-assigned ship ID.
-     * Each entry: { ship } — positions are driven by the jitter buffer.
+     * Each entry: { ship } â€” positions are driven by the jitter buffer.
      * @type {Map<string,{ship:object}>}
      */
     this._clientGhosts = new Map();
 
     /**
-     * Jitter buffer — ring buffer of received AI state snapshots.
+     * Jitter buffer â€” ring buffer of received AI state snapshots.
      * Each entry: { receiveTs: number, states: Map<id, {x,z,ry,hp,mhp,cls,fac}> }
      * Kept sorted ascending by receiveTs. Capped at 30 entries (~3s at 10Hz).
      * @type {Array<{receiveTs:number, states:Map<string,object>}>}
@@ -442,7 +446,7 @@ export class AISystem {
 
     EventEmitter.on('ship:destroyed', ({ ship }) => {
       if (ship.faction !== Faction.PLAYER) {
-        // Only HOST/STANDALONE schedules respawns — client waits for network state
+        // Only HOST/STANDALONE schedules respawns â€” client waits for network state
         if (this.syncMode !== 'CLIENT') {
           this._scheduleRespawn(ship.faction);
         }
@@ -455,7 +459,7 @@ export class AISystem {
       }
     });
 
-    // Night — detection range decreases, aggression increases
+    // Night â€” detection range decreases, aggression increases
     EventEmitter.on('sky:night', () => {
       AIAgent.nightMultiplier = 0.60;
       // Fire 20 % faster at night
@@ -488,9 +492,9 @@ export class AISystem {
   }
 
 
-  /** Spawn initial enemy ships — called once after world init. */
+  /** Spawn initial enemy ships â€” called once after world init. */
   spawnInitialEnemies() {
-    // CLIENT never spawns locally — ships arrive via network
+    // CLIENT never spawns locally â€” ships arrive via network
     if (this.syncMode === 'CLIENT') return;
 
     const spawnCounts = {
@@ -523,7 +527,7 @@ export class AISystem {
   }
 
   _spawnEnemy(faction) {
-    // CLIENT never spawns locally — ships arrive via network
+    // CLIENT never spawns locally â€” ships arrive via network
     if (this.syncMode === 'CLIENT') return null;
 
     const cls         = FactionShipClass[faction];
@@ -540,10 +544,10 @@ export class AISystem {
   }
 
   _scheduleRespawn(faction) {
-    // CLIENT never schedules respawns — host drives all spawning
+    // CLIENT never schedules respawns â€” host drives all spawning
     if (this.syncMode === 'CLIENT') return;
 
-    // Pirate Hunter is a rare boss — takes 3× longer
+    // Pirate Hunter is a rare boss â€” takes 3Ã— longer
     const delay = faction === Faction.PIRATE_HUNTER
       ? GameConfig.AI_RESPAWN_DELAY * 3
       : GameConfig.AI_RESPAWN_DELAY;
@@ -554,7 +558,7 @@ export class AISystem {
   update(delta, playerPos) {
     if (!playerPos) return;
 
-    // ── Tick angered-faction timers ────────────────────────────────────────────
+    // â”€â”€ Tick angered-faction timers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
     for (const [f, t] of Object.entries(this._angeredFactions)) {
       this._angeredFactions[f] = t - delta;
       if (this._angeredFactions[f] <= 0) {
@@ -603,10 +607,10 @@ export class AISystem {
 
   get agentCount() { return this._agents.length; }
 
-  // ─── Co-op sync helpers ───────────────────────────────────────────────────────────────
+  // â”€â”€â”€ Co-op sync helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   /**
-   * HOST → returns a compact serialisable snapshot of all current AI ships.
+   * HOST â†’ returns a compact serialisable snapshot of all current AI ships.
    * Called each frame by main.js; the array is passed to MultiplayerSystem.sendAIState().
    * @returns {Array}
    */
@@ -631,7 +635,7 @@ export class AISystem {
   }
 
   /**
-   * CLIENT — push a received AI snapshot into the jitter buffer.
+   * CLIENT â€” push a received AI snapshot into the jitter buffer.
    * Called by mp.onAIState callback with the data from MultiplayerSystem.
    *
    * @param {{ receiveTs: number, ships: Array<{id,cls,fac,x,z,ry,hp,mhp}> }} packet
@@ -666,7 +670,7 @@ export class AISystem {
         ship.maxHealth = s.mhp ?? s.hp;
         this._clientGhosts.set(id, { ship });
       } else {
-        // Update health immediately (non-interpolated — health snaps, not lerps)
+        // Update health immediately (non-interpolated â€” health snaps, not lerps)
         const ghost = this._clientGhosts.get(id);
         ghost.ship.health    = s.hp;
         ghost.ship.maxHealth = s.mhp ?? s.hp;
@@ -692,7 +696,7 @@ export class AISystem {
   }
 
   /**
-   * CLIENT — per-frame interpolation using the jitter buffer.
+   * CLIENT â€” per-frame interpolation using the jitter buffer.
    * Replaces the old _tickClientLerp() which used instant lerp-to-target.
    *
    * Algorithm:
@@ -703,7 +707,7 @@ export class AISystem {
    *
    * If only one entry exists (early join), fall back to snap-to-position.
    *
-   * @param {number} nowTs — performance.now() from the caller
+   * @param {number} nowTs â€” performance.now() from the caller
    */
   tickJitterInterp(nowTs) {
     if (this.syncMode !== 'CLIENT') return;
@@ -725,7 +729,7 @@ export class AISystem {
       }
     }
 
-    // Edge case: renderTs is before all buffered data → use oldest entry (snap)
+    // Edge case: renderTs is before all buffered data â†’ use oldest entry (snap)
     if (!prev) {
       prev = this._jitterBuffer[0];
       next = null;
@@ -738,10 +742,10 @@ export class AISystem {
       const prevState = prev.states.get(id);
       const nextState = next?.states.get(id);
 
-      if (!prevState) continue; // not in this snapshot — skip
+      if (!prevState) continue; // not in this snapshot â€” skip
 
       if (!nextState) {
-        // Only one data point — snap directly
+        // Only one data point â€” snap directly
         ship.group.position.x = prevState.x;
         ship.group.position.z = prevState.z;
         // Shortest-path angle
@@ -777,3 +781,4 @@ export class AISystem {
 }
 
 export default AISystem;
+

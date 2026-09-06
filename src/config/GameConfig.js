@@ -48,7 +48,9 @@ export const GameConfig = {
   AI_CHASE_RANGE: 180,
   AI_ATTACK_RANGE: 60,
   AI_LOSE_RANGE: 300,
-  AI_FIRE_COOLDOWN: 3.0,
+  AI_FIRE_COOLDOWN: 3.8,         // enemy cannon reload (seconds, rebalanced for fairer combat)
+  AI_AIM_SPREAD: 0.18,           // angular inaccuracy for enemy broadsides (radians, ~10°)
+  AI_CANNONBALL_SPEED_FACTOR: 0.88, // enemy cannonballs are slightly more dodgable
   AI_RESPAWN_DELAY: 30,
   AI_RETREAT_HEALTH_PCT: 0.20,   // retreat when HP drops below this fraction
   // ── Building costs ────────────────────────────────────

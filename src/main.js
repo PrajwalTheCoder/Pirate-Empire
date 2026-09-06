@@ -46,6 +46,7 @@ import UIPanel        from './ui/UIPanel.js';
 import MissionUI      from './ui/MissionUI.js';
 import DialogueSystem from './ui/DialogueSystem.js';
 import Minimap    from './ui/Minimap.js';
+import TutorialSystem from './ui/TutorialSystem.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
 import GameConfig from './config/GameConfig.js';
@@ -267,6 +268,15 @@ class Game {
 
     // ── 5. UI ────────────────────────────────────────────────────────────────
     this._initUI();
+
+    // ── 5b. Tutorial (init after UI so DOM is ready) ──────────────────
+    this.tutorial = new TutorialSystem();
+    this.tutorial.checkAndShow();
+
+    // Wire ❓ Controls button (in HUD and/or main menu)
+    document.querySelectorAll('.controls-help-btn, #hud-help-btn').forEach(btn => {
+      btn.addEventListener('click', () => this.tutorial.show());
+    });
 
     // ── 6. Reveal game UI ────────────────────────────────────────────────────
     document.body.classList.add('game-started');
@@ -969,6 +979,7 @@ class Game {
       this.ships,
       this.islandSys,
       GameConfig.WORLD_SIZE,
+      this._partnerShip,
     );
 
     // Cinematic Dialogue System
@@ -1711,6 +1722,10 @@ class Game {
     menu?.classList.add('hidden');
     document.getElementById('mm-version')?.remove();
     this.isCoop = true;
+    // Give the MP system the player's name so it's included in the VERSION_HELLO
+    if (this.mp) {
+      this.mp._localPlayerName = this.playerName;
+    }
     this._startGame();
     this._initCoopInGame();
 
@@ -2179,7 +2194,16 @@ class Game {
       this.islandSys.capturedCount,
     );
 
-    // ── Boss bar ──────────────────────────────────────────────────────────────
+    // ── Co-op partner overhead marker ──────────────────────────────────────────
+    if (this.isCoop && this._partnerShip && this.hud) {
+      const pName = this.mp?.partnerName || 'First Mate';
+      this.hud.updatePartnerMarker(
+        this._partnerShip,
+        pName,
+        this.playerShip?.group.position ?? null,
+      );
+    }
+
     const bossShip = this.ships.all.find(s => 
       (s.faction === Faction.PIRATE_HUNTER || s.group?.name === "Silas Veynar's Dread") && s.isAlive
     );
@@ -2216,7 +2240,13 @@ class Game {
     this.hud.updateIslandHPBars(this._islands);
 
     // ── Minimap ────────────────────────────────────────────────────────────
-    this.minimap.update(delta, this.playerShip?.group.position ?? null, this._treasureMarks ?? []);
+    this.minimap.update(
+      delta,
+      this.playerShip?.group.position ?? null,
+      this._treasureMarks ?? [],
+      this.isCoop ? this._partnerShip : null,
+      this.isCoop ? (this.mp?.partnerName || '') : '',
+    );
 
     // ── Treasure mark proximity ───────────────────────────────────────────────
     if (this.playerShip?.isAlive && this._treasureMarks) {

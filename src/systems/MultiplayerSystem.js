@@ -99,7 +99,11 @@ export class MultiplayerSystem {
       vx: 0, vy: 0, vz: 0,
       health: 100, maxHealth: 100,
       faction: 'PLAYER',
+      name: '',  // partner captain name
     };
+
+    // Partner name (latest received from VERSION_HELLO)
+    this.partnerName = '';
 
     // Rescue state
     this._rescueTimer   = 0;
@@ -361,7 +365,8 @@ export class MultiplayerSystem {
       this.connected = true;
       // Send version handshake as the very first packet so both sides can
       // detect a protocol mismatch before any game state is exchanged.
-      this._sendJSON(MSG.VERSION_HELLO, { v: PROTOCOL_VERSION, role: this.role });
+      // Include player name so the partner knows our captain name immediately.
+      this._sendJSON(MSG.VERSION_HELLO, { v: PROTOCOL_VERSION, role: this.role, name: this._localPlayerName || '' });
       this.onConnected?.();
       EventEmitter.emit('mp:connected');
     });
@@ -455,6 +460,12 @@ export class MultiplayerSystem {
     switch (msg.t) {
       case MSG.VERSION_HELLO: {
         const theirVersion = msg.d?.v ?? 1;
+        // Store partner captain name
+        if (msg.d?.name) {
+          this.partnerName = msg.d.name;
+          this.partnerState.name = msg.d.name;
+          EventEmitter.emit('mp:partner_name', { name: msg.d.name });
+        }
         if (theirVersion !== PROTOCOL_VERSION) {
           this._versionMismatch = true;
           const err = `Protocol mismatch! You are on v${PROTOCOL_VERSION}, partner is on v${theirVersion}. Please both refresh the game.`;

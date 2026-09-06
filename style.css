@@ -4257,3 +4257,284 @@ body.game-started.mobile-device .mob-top-label {
   .mob-top-btn          { width: 36px; height: 36px; font-size: 1.1rem; }
 }
 
+
+/* ---------------------------------------------------------------------------
+   TUTORIAL SYSTEM — Pirate-themed interactive controls guide
+   --------------------------------------------------------------------------- */
+
+/* -- Tutorial modal overlay ------------------------------------------------ */
+.tutorial-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.tutorial-hidden  { display: none !important; }
+.tutorial-visible { display: flex !important; }
+
+.tutorial-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  backdrop-filter: blur(4px);
+}
+
+/* -- Tutorial box (parchment card) ----------------------------------------- */
+.tutorial-box {
+  position: relative;
+  z-index: 1;
+  width: min(520px, 92vw);
+  background: linear-gradient(160deg, #1a1008 0%, #0d0806 100%);
+  border: 2px solid #c8922a;
+  border-radius: 16px;
+  box-shadow:
+    0 0 0 1px rgba(200,146,42,0.2),
+    0 20px 80px rgba(0,0,0,0.8),
+    inset 0 1px 0 rgba(255,200,80,0.08);
+  padding: 24px 28px 20px;
+  animation: tutorialFadeIn 0.3s ease;
+}
+@keyframes tutorialFadeIn {
+  from { opacity: 0; transform: scale(0.93) translateY(16px); }
+  to   { opacity: 1; transform: scale(1)    translateY(0);    }
+}
+
+/* -- Header ---------------------------------------------------------------- */
+.tutorial-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.tutorial-logo { font-size: 1.6rem; }
+.tutorial-title {
+  flex: 1;
+  font-family: 'Cinzel Decorative', 'Georgia', serif;
+  font-size: 1.15rem;
+  font-weight: 700;
+  margin: 0;
+  text-shadow: 0 0 20px currentColor;
+  letter-spacing: 0.04em;
+}
+.tutorial-close-btn {
+  background: transparent;
+  border: 1px solid rgba(200,146,42,0.35);
+  border-radius: 6px;
+  color: #c8922a;
+  font-size: 0.85rem;
+  padding: 2px 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tutorial-close-btn:hover {
+  background: rgba(200,146,42,0.15);
+  color: #f0c040;
+}
+
+/* -- Content rows (key ? description) ------------------------------------- */
+.tutorial-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.tutorial-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.tutorial-key {
+  display: inline-block;
+  min-width: 110px;
+  background: rgba(200,146,42,0.12);
+  border: 1px solid rgba(200,146,42,0.4);
+  border-radius: 7px;
+  padding: 4px 10px;
+  font-family: 'Consolas', monospace;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #f0c040;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 2px 0 rgba(0,0,0,0.5);
+  flex-shrink: 0;
+}
+.tutorial-desc {
+  font-size: 0.87rem;
+  color: #d0c0a0;
+  line-height: 1.4;
+}
+
+/* -- Tip box ---------------------------------------------------------------- */
+.tutorial-tip-box {
+  background: rgba(0,200,100,0.07);
+  border: 1px solid rgba(0,200,100,0.25);
+  border-radius: 8px;
+  padding: 9px 13px;
+  font-size: 0.82rem;
+  color: #80ffb0;
+  margin-bottom: 16px;
+}
+
+/* -- Footer (dots + nav) --------------------------------------------------- */
+.tutorial-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.tutorial-dots {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.tutorial-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: rgba(200,146,42,0.3);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.tutorial-dot.active {
+  background: #f0c040;
+  box-shadow: 0 0 6px #f0c040;
+}
+.tutorial-nav { display: flex; gap: 10px; }
+.tutorial-btn {
+  padding: 8px 18px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.tutorial-btn.secondary {
+  background: rgba(200,146,42,0.1);
+  border: 1px solid rgba(200,146,42,0.4);
+  color: #c8922a;
+}
+.tutorial-btn.secondary:hover { background: rgba(200,146,42,0.2); color: #f0c040; }
+.tutorial-btn.primary {
+  background: linear-gradient(135deg, #c8922a, #f0c040);
+  color: #0d0806;
+}
+.tutorial-btn.primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
+.tutorial-btn.sail {
+  background: linear-gradient(135deg, #00aa55, #00ff88);
+  color: #021208;
+  animation: sailPulse 1.6s ease-in-out infinite;
+}
+@keyframes sailPulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(0,255,136,0.3); }
+  50%       { box-shadow: 0 0 20px rgba(0,255,136,0.7); }
+}
+
+/* -- Skip label ------------------------------------------------------------ */
+.tutorial-skip-label {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 14px;
+  font-size: 0.78rem;
+  color: #806040;
+  cursor: pointer;
+  user-select: none;
+}
+.tutorial-skip-label input { cursor: pointer; accent-color: #c8922a; }
+
+
+/* ---------------------------------------------------------------------------
+   CO-OP PARTNER OVERHEAD MARKER
+   --------------------------------------------------------------------------- */
+
+/* -- Floating overhead marker above partner ship --------------------------- */
+.partner-marker {
+  position: fixed;
+  z-index: 800;
+  pointer-events: none;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  filter: drop-shadow(0 2px 8px rgba(0,255,102,0.5));
+  transition: left 0.05s linear, top 0.05s linear;
+}
+.partner-marker.hidden { display: none; }
+
+.partner-marker-name {
+  background: rgba(0, 20, 10, 0.85);
+  border: 1px solid #00ff66;
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #00ff88;
+  white-space: nowrap;
+  letter-spacing: 0.03em;
+}
+
+.partner-marker-hpbar {
+  width: 80px;
+  height: 6px;
+  background: rgba(255,255,255,0.12);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.partner-marker-hpfill {
+  height: 100%;
+  background: #00ff66;
+  border-radius: 3px;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.partner-marker-hptext {
+  font-size: 0.68rem;
+  color: rgba(200,255,220,0.85);
+  font-weight: 600;
+}
+.partner-marker-dist {
+  font-size: 0.65rem;
+  color: rgba(180,255,210,0.6);
+}
+
+/* -- Edge arrow (partner off-screen indicator) ---------------------------- */
+.partner-edge-arrow {
+  position: fixed;
+  z-index: 799;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: rgba(0, 20, 10, 0.8);
+  border: 1px solid #00ff66;
+  border-radius: 50px;
+  padding: 4px 8px;
+  font-size: 0.78rem;
+  color: #00ff88;
+  transition: left 0.08s linear, top 0.08s linear, transform 0.1s linear;
+  white-space: nowrap;
+}
+.partner-edge-arrow.hidden { display: none; }
+.pea-icon { font-size: 0.9rem; }
+.pea-arrow { font-size: 0.7rem; opacity: 0.85; }
+
+/* -- HUD help button (? Controls) ---------------------------------------- */
+#hud-help-btn {
+  background: rgba(200,146,42,0.12);
+  border: 1px solid rgba(200,146,42,0.35);
+  border-radius: 7px;
+  color: #c8922a;
+  font-size: 0.82rem;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+#hud-help-btn:hover {
+  background: rgba(200,146,42,0.25);
+  color: #f0c040;
+}
+

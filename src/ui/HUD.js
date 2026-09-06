@@ -31,6 +31,9 @@ export class HUD {
     /** @type {{ text: string, type: string, timer: number, el: HTMLElement }[]} */
     this._toasts = [];
 
+    // Partner overhead marker element (created lazily)
+    this._partnerMarkerEl = null;
+
     // Subscribe to events
     EventEmitter.on('economy:changed', (res) => this._onEconomyChanged(res));
     EventEmitter.on('island:capturable', ({ island }) =>
@@ -192,6 +195,110 @@ export class HUD {
     const relativeAngle = windAngle - playerRotation;
     const degrees = (relativeAngle * 180 / Math.PI) + 180;
     this._windArrow.style.transform = `rotate(${degrees}deg)`;
+  }
+
+  // ── Partner Overhead Marker ──────────────────────────────────────────────────
+
+  /**
+   * Render a floating overhead HUD marker above the co-op partner ship.
+   * Shows captain name, green health bar, HP text, and distance.
+   * When partner is off-screen, renders a directional edge arrow.
+   *
+   * @param {string}      partnerName  — captain name of the partner
+   * @param {THREE.Vector3|null} playerPos — local player position for distance calc
+   */
+  updatePartnerMarker(partnerShip, partnerName, playerPos) {
+    // Lazy-create the container once
+    if (!this._partnerMarkerEl) {
+      const el = document.createElement('div');
+      el.id = 'partner-overhead-marker';
+      el.className = 'partner-marker';
+      el.innerHTML = `
+        <div class="partner-marker-name">🤝 <span id="pmk-name"></span></div>
+        <div class="partner-marker-hpbar">
+          <div class="partner-marker-hpfill" id="pmk-hpfill"></div>
+        </div>
+        <div class="partner-marker-hptext" id="pmk-hptext"></div>
+        <div class="partner-marker-dist" id="pmk-dist"></div>
+      `;
+      document.body.appendChild(el);
+      this._partnerMarkerEl = el;
+
+      // Edge arrow indicator (shown when partner is off-screen)
+      const arrow = document.createElement('div');
+      arrow.id = 'partner-edge-arrow';
+      arrow.className = 'partner-edge-arrow hidden';
+      arrow.innerHTML = `<span class="pea-icon">🤝</span><span class="pea-arrow">▶</span>`;
+      document.body.appendChild(arrow);
+      this._partnerEdgeEl = arrow;
+    }
+
+    if (!partnerShip || !partnerShip.group) {
+      this._partnerMarkerEl.classList.add('hidden');
+      this._partnerEdgeEl?.classList.add('hidden');
+      return;
+    }
+
+    const worldPos = partnerShip.group.position.clone();
+    worldPos.y += 12; // raise above the mast
+    const screen = worldToScreen(worldPos, this._camera, this._canvas);
+
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    const onScreen = screen.x > 60 && screen.x < W - 60 &&
+                     screen.y > 60 && screen.y < H - 60;
+
+    // Update HP data
+    const hp  = partnerShip.health    ?? 100;
+    const mhp = partnerShip.maxHealth ?? 100;
+    const hpPct = mhp > 0 ? Math.max(0, hp / mhp) : 0;
+
+    const nameEl   = document.getElementById('pmk-name');
+    const fillEl   = document.getElementById('pmk-hpfill');
+    const hpTextEl = document.getElementById('pmk-hptext');
+    const distEl   = document.getElementById('pmk-dist');
+
+    if (nameEl)   nameEl.textContent   = partnerName || 'First Mate';
+    if (fillEl) {
+      fillEl.style.width       = `${(hpPct * 100).toFixed(0)}%`;
+      // green → yellow → red based on HP
+      fillEl.style.background  = hpPct > 0.5 ? '#00ff66'
+                                : hpPct > 0.25 ? '#ffcc00' : '#ff3030';
+    }
+    if (hpTextEl) hpTextEl.textContent = `${Math.ceil(hp)} / ${Math.ceil(mhp)}`;
+
+    if (distEl && playerPos) {
+      const dx = partnerShip.group.position.x - playerPos.x;
+      const dz = partnerShip.group.position.z - playerPos.z;
+      distEl.textContent = `${Math.round(Math.sqrt(dx*dx + dz*dz))}m away`;
+    }
+
+    if (onScreen) {
+      this._partnerMarkerEl.classList.remove('hidden');
+      this._partnerMarkerEl.style.left      = `${screen.x}px`;
+      this._partnerMarkerEl.style.top       = `${screen.y}px`;
+      this._partnerMarkerEl.style.transform = 'translate(-50%, -100%)';
+      this._partnerEdgeEl?.classList.add('hidden');
+    } else {
+      // Off-screen: hide main marker, show edge arrow
+      this._partnerMarkerEl.classList.add('hidden');
+      const arrow = this._partnerEdgeEl;
+      if (!arrow) return;
+      arrow.classList.remove('hidden');
+
+      // Clamp to screen edge
+      const cx = W / 2, cy = H / 2;
+      const dx = screen.x - cx;
+      const dy = screen.y - cy;
+      const angle = Math.atan2(dy, dx);
+      const MARGIN = 52;
+      const ex = cx + Math.cos(angle) * (Math.min(cx, cy) - MARGIN);
+      const ey = cy + Math.sin(angle) * (Math.min(cx, cy) - MARGIN);
+
+      arrow.style.left      = `${Math.round(ex)}px`;
+      arrow.style.top       = `${Math.round(ey)}px`;
+      arrow.style.transform = `translate(-50%,-50%) rotate(${Math.round(angle * 180 / Math.PI)}deg)`;
+    }
   }
 
   update(_delta) { /* event-driven */ }

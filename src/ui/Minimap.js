@@ -46,8 +46,10 @@ export class Minimap {
    * @param {number}              _delta
    * @param {THREE.Vector3|null}  playerPos
    * @param {Array<{x,z,found}>}  treasureMarks
+   * @param {Ship|null}           partnerShip   — co-op partner ghost ship
+   * @param {string}              [partnerName] — partner captain name
    */
-  update(_delta, playerPos = null, treasureMarks = []) {
+  update(_delta, playerPos = null, treasureMarks = [], partnerShip = null, partnerName = '') {
     const ctx = this._ctx;
     if (!ctx) return;
 
@@ -168,8 +170,38 @@ export class Minimap {
       ctx.fill();
     }
 
+    // ── Co-op Partner Ship ─────────────────────────────────────────────────────
+    if (partnerShip && partnerShip.isAlive) {
+      const { px: ppx, py: ppy } = this._toMap(
+        partnerShip.group.position.x, partnerShip.group.position.z);
+
+      ctx.save();
+      ctx.translate(ppx, ppy);
+      ctx.rotate(-partnerShip.group.rotation.y);
+
+      // Emerald green arrow (same shape as player but different colour)
+      ctx.fillStyle = '#00ff66';
+      ctx.shadowColor = '#00ff66';
+      ctx.shadowBlur = 4;
+      ctx.beginPath();
+      ctx.moveTo(0, -6);
+      ctx.lineTo( 3.5,  3.5);
+      ctx.lineTo(-3.5,  3.5);
+      ctx.closePath();
+      ctx.fill();
+      ctx.shadowBlur = 0;
+
+      ctx.restore();
+
+      // Partner label beside the arrow
+      const labelName = partnerName ? partnerName.split(' ').pop() : 'Partner';
+      ctx.fillStyle = '#00ff66';
+      ctx.font = 'bold 7px sans-serif';
+      ctx.fillText(labelName, ppx + 6, ppy - 4);
+    }
+
     // ── Player ship ────────────────────────────────────────────────────────────
-    const player = this._ships.all.find(s => s.faction === 'PLAYER');
+    const player = this._ships.all.find(s => s.faction === 'PLAYER' && !s._isPartnerGhost);
     if (player && player.isAlive) {
       const { px, py } = this._toMap(
         player.group.position.x, player.group.position.z);
