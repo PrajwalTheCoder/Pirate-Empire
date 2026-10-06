@@ -1,0 +1,6 @@
+# robots.txt for Pirate Empire
+User-agent: *
+Allow: /
+
+# Sitemaps
+Sitemap: https://pirate-empire-prajwal.vercel.app/sitemap.xml

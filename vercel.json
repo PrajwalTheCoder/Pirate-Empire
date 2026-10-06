@@ -2,14 +2,31 @@
   "cleanUrls": true,
   "buildCommand": null,
   "outputDirectory": ".",
-  "rebuildToken": "2026-09-03-21-40",
   "headers": [
+    {
+      "source": "/(kenney_pirate-kit/.*|.*\\.(?:glb|gltf|bin|jpg|jpeg|png|webp|svg|ico|mp3|wav|ogg|woff2?|ttf))",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(robots\\.txt|sitemap\\.xml|manifest\\.webmanifest)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=86400, stale-while-revalidate=43200"
+        }
+      ]
+    },
     {
       "source": "/(.*)",
       "headers": [
         {
           "key": "Cache-Control",
-          "value": "no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0"
+          "value": "no-cache, must-revalidate, max-age=0"
         }
       ]
     }

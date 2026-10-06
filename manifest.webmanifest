@@ -1,0 +1,19 @@
+{
+  "name": "Pirate Empire: Rise of the Black Fleet",
+  "short_name": "Pirate Empire",
+  "description": "Play Pirate Empire online for free - epic 3D open-world naval combat and co-op pirate voyage browser game.",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "landscape",
+  "background_color": "#0a1628",
+  "theme_color": "#0e1a2b",
+  "icons": [
+    {
+      "src": "/og-image.jpg",
+      "sizes": "1200x630",
+      "type": "image/jpeg",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["games", "entertainment", "action"]
+}

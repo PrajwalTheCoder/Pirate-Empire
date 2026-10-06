@@ -3,12 +3,115 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pirate Empire: Rise of the Black Fleet</title>
+  <!-- Primary SEO Meta Tags -->
+  <title>Pirate Empire: Rise of the Black Fleet | Free 3D Naval Action RPG Game</title>
+  <meta name="title" content="Pirate Empire: Rise of the Black Fleet | Free 3D Naval Action RPG Game" />
+  <meta name="description" content="Play Pirate Empire online for free! Experience epic 3D open-world naval combat, cannon battles, island conquests, faction diplomacy, and online co-op multiplayer directly in your browser. No download required." />
+  <meta name="keywords" content="pirate empire, pirate empire game, pirate empire online, play pirate empire, 3d pirate game, naval combat browser game, pirate ship game, open world pirate game, webgl games, threejs games" />
+  <meta name="author" content="Prajwal Mhatre" />
+  <meta name="robots" content="index, follow, max-snippet:-1, max-image-preview:large, max-video-preview:-1" />
+  <link rel="canonical" href="https://pirate-empire-prajwal.vercel.app/" />
+  <meta name="theme-color" content="#0e1a2b" />
+  <meta name="color-scheme" content="dark" />
+
+  <!-- Web App Manifest & Icons -->
+  <link rel="manifest" href="/manifest.webmanifest" />
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#x2620;</text></svg>" />
+  <link rel="apple-touch-icon" href="/og-image.jpg" />
+
+  <!-- Open Graph / Facebook / Discord Meta Tags -->
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://pirate-empire-prajwal.vercel.app/" />
+  <meta property="og:site_name" content="Pirate Empire" />
+  <meta property="og:title" content="Pirate Empire: Rise of the Black Fleet | Free 3D Browser Game" />
+  <meta property="og:description" content="Command legendary warships, conquer enemy islands, trade with factions, and set sail with friends in online co-op mode. Play Pirate Empire in your browser now!" />
+  <meta property="og:image" content="https://pirate-empire-prajwal.vercel.app/og-image.jpg" />
+  <meta property="og:image:width" content="1200" />
+  <meta property="og:image:height" content="630" />
+  <meta property="og:image:alt" content="Pirate Empire - Epic 3D Naval Combat Game" />
+
+  <!-- Twitter Meta Tags -->
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:url" content="https://pirate-empire-prajwal.vercel.app/" />
+  <meta name="twitter:title" content="Pirate Empire: Rise of the Black Fleet" />
+  <meta name="twitter:description" content="Free 3D open-world naval combat RPG playable directly in your web browser. Sail, battle, conquer, and rule the high seas!" />
+  <meta name="twitter:image" content="https://pirate-empire-prajwal.vercel.app/og-image.jpg" />
+
+  <!-- Structured Data: Schema.org VideoGame & WebApplication JSON-LD -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "VideoGame",
+        "@id": "https://pirate-empire-prajwal.vercel.app/#game",
+        "name": "Pirate Empire",
+        "alternateName": [
+          "Pirate Empire: Rise of the Black Fleet",
+          "Pirate Empire Game",
+          "Pirate Empire Online"
+        ],
+        "description": "Pirate Empire is a free 3D open-world naval combat action RPG playable directly in your web browser without downloads. Command warships, bombard enemy forts, capture islands, engage in faction diplomacy, and sail together in online co-op multiplayer.",
+        "url": "https://pirate-empire-prajwal.vercel.app/",
+        "image": "https://pirate-empire-prajwal.vercel.app/og-image.jpg",
+        "genre": [
+          "Action",
+          "Adventure",
+          "Naval Combat",
+          "Open World",
+          "Role-Playing Game",
+          "Simulation"
+        ],
+        "gamePlatform": [
+          "Web Browser",
+          "PC",
+          "Mac",
+          "Linux",
+          "Mobile Browser"
+        ],
+        "applicationCategory": "Game",
+        "operatingSystem": "Any modern web browser with WebGL",
+        "playMode": [
+          "SinglePlayer",
+          "CoOp",
+          "MultiPlayer"
+        ],
+        "numberOfPlayers": {
+          "@type": "QuantitativeValue",
+          "minValue": 1,
+          "maxValue": 2
+        },
+        "inLanguage": "en",
+        "isAccessibleForFree": true,
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD",
+          "availability": "https://schema.org/InStock"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "Prajwal Mhatre"
+        }
+      },
+      {
+        "@type": "WebApplication",
+        "@id": "https://pirate-empire-prajwal.vercel.app/#webapp",
+        "name": "Pirate Empire Web Game",
+        "url": "https://pirate-empire-prajwal.vercel.app/",
+        "applicationCategory": "GameApplication",
+        "browserRequirements": "Requires WebGL support",
+        "operatingSystem": "All"
+      }
+    ]
+  }
+  </script>
+
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Pirata+One&family=MedievalSharp&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
+
 
   <!-- Three.js importmap — no build tools required -->
   <script type="importmap">
@@ -810,6 +913,54 @@
 
     </div>
   </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       SEARCH ENGINE & ACCESSIBILITY SEMANTIC LAYER
+       (Visually hidden with .sr-only: 0 impact on game visual UI)
+  ═══════════════════════════════════════════════════ -->
+  <section class="sr-only" aria-label="About Pirate Empire">
+    <h2>Play Pirate Empire: Rise of the Black Fleet</h2>
+    <p>
+      Pirate Empire is an action-packed 3D open-world naval combat role-playing browser game built with Three.js and WebGL.
+      Step into the boots of a fearless pirate captain, steer your armed galleon across an expansive Caribbean ocean,
+      and build your maritime pirate empire. Engage enemy warships with broadside cannon salvos, conquer and fortify tropical islands,
+      trade with unique factions, and dominate the high seas alone or with friends in online co-op multiplayer.
+    </p>
+
+    <h3>Key Game Features of Pirate Empire</h3>
+    <ul>
+      <li><strong>Real-Time 3D Naval Combat:</strong> Aim and fire port, starboard, and bow cannons with dynamic ballistics and realistic ship sinking physics.</li>
+      <li><strong>Online Co-op Multiplayer:</strong> Team up with a first mate via instant peer room codes without account registration.</li>
+      <li><strong>Island Conquest & Defense:</strong> Capture neutral and hostile islands, claim their resources, and defend your territory against rival fleets.</li>
+      <li><strong>Dynamic World & Weather:</strong> Sail through live day-and-night cycles, stormy seas, and unpredictable ocean currents.</li>
+      <li><strong>Faction Standings & Diplomacy:</strong> Interact with 7 distinct naval factions across the Caribbean, altering alliances and bounties.</li>
+      <li><strong>Ship Upgrades & RPG Progression:</strong> Upgrade hulls, cannon power, speed, sail durability, and unlock captain perks.</li>
+      <li><strong>Free & Instant Browser Play:</strong> Play Pirate Empire instantly with no downloads, installers, or sign-ups required.</li>
+    </ul>
+
+    <h3>How to Play Pirate Empire</h3>
+    <p>
+      Control your ship using standard keyboard controls (W/S for sails and throttle, A/D for rudder steering, Spacebar to fire broadside cannons,
+      Q to drop anchor, E to capture islands, and B to board enemy vessels). On mobile devices, use on-screen virtual joystick and touch action buttons.
+    </p>
+
+    <h3>Frequently Asked Questions (FAQ)</h3>
+    <dl>
+      <dt>What is Pirate Empire?</dt>
+      <dd>Pirate Empire is a free-to-play 3D browser-based pirate RPG game where players captain war galleons, fight rival fleets, conquer islands, and build a pirate dynasty.</dd>
+      <dt>Is Pirate Empire free to play?</dt>
+      <dd>Yes, Pirate Empire is 100% free to play directly in your web browser on PC, Mac, Linux, and mobile devices.</dd>
+      <dt>Can I play Pirate Empire with friends?</dt>
+      <dd>Yes, Pirate Empire features a built-in 2-player online co-op voyage mode where you can share room codes and sail together in the same ocean world.</dd>
+    </dl>
+  </section>
+
+  <noscript>
+    <div style="background:#0a1628;color:#f0d080;padding:20px;text-align:center;font-family:sans-serif;">
+      <h2>Pirate Empire: Rise of the Black Fleet</h2>
+      <p>Pirate Empire is a 3D browser-based naval action game. Please enable JavaScript in your browser to sail the high seas and play.</p>
+    </div>
+  </noscript>
 
   <!-- ═══════════════════════════════════════════════════
        GAME ENTRY POINT
