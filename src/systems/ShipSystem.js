@@ -111,6 +111,7 @@ export class Ship {
     const reducedDamage = rawDamage * (1 - dr);
     const actual = Math.round(Math.max(1, reducedDamage - this.armor));
     this.health  = clamp(this.health - actual, 0, this.maxHealth);
+    this._lastHitTime = performance.now();
 
     EventEmitter.emit('ship:hit', { ship: this, damage: actual });
 
@@ -657,6 +658,44 @@ export class ShipSystem {
             a.velocity.z -= nz * impulse;
             b.velocity.x += nx * impulse;
             b.velocity.z += nz * impulse;
+          }
+
+          // ── Momentum-based Ramming Damage (Combat Improvement) ─────────────
+          if (velAlong > 4.2) {
+            const now = performance.now();
+            const canRamA = !a._lastRamMs || (now - a._lastRamMs > 1200);
+            const canRamB = !b._lastRamMs || (now - b._lastRamMs > 1200);
+
+            // Determine if ships are hostile (different team in Team Battle or different faction in Solo/Coop)
+            const isHostile = (a.team && b.team && a.team !== b.team) ||
+                              (!a.team && !b.team && a.faction !== b.faction && (a.faction === 'PLAYER' || b.faction === 'PLAYER'));
+
+            if (isHostile && (canRamA || canRamB)) {
+              a._lastRamMs = now;
+              b._lastRamMs = now;
+
+              // Check headings: forward vector dot product with collision normal
+              const fwdA = new THREE.Vector3(0, 0, -1).applyQuaternion(a.group.quaternion);
+              const fwdB = new THREE.Vector3(0, 0, -1).applyQuaternion(b.group.quaternion);
+              const dotA = fwdA.x * (-nx) + fwdA.z * (-nz);
+              const dotB = fwdB.x * nx + fwdB.z * nz;
+
+              const ramSpeed = Math.min(velAlong, 24);
+              const targetDmg = Math.round(ramSpeed * 2.8);
+              const recoilDmg = Math.round(ramSpeed * 0.9);
+
+              if (dotA >= dotB) {
+                // A rammed into B
+                const actualB = b.takeDamage(targetDmg);
+                const actualA = a.takeDamage(recoilDmg);
+                EventEmitter.emit('ship:rammed', { rammer: a, victim: b, damage: actualB, recoil: actualA });
+              } else {
+                // B rammed into A
+                const actualA = a.takeDamage(targetDmg);
+                const actualB = b.takeDamage(recoilDmg);
+                EventEmitter.emit('ship:rammed', { rammer: b, victim: a, damage: actualA, recoil: actualB });
+              }
+            }
           }
         }
       }

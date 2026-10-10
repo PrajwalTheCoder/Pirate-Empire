@@ -577,6 +577,7 @@ export class CombatSystem {
     this._scene      = scene;
     this._shipSystem = shipSystem;
     this._islands    = null;
+    this.teamBattle  = null;
 
     /** Current player ammo selection */
     this.currentAmmo = AmmoType.ROUND;
@@ -679,6 +680,9 @@ export class CombatSystem {
   /** Register island data so cannonballs can damage player-owned islands. */
   setIslands(islands) { this._islands = islands; }
 
+  /** Register active Team Battle system. */
+  setTeamBattle(teamBattle) { this.teamBattle = teamBattle; }
+
   /**
    * Fire a broadside from a ship (two cannonballs — port and starboard).
    * @param {Ship}    ship
@@ -714,8 +718,14 @@ export class CombatSystem {
     const extraCount = ship._extraBalls ?? 0;
     const sideExtra = Math.floor(extraCount / 2); // e.g. 1 on each side for +2 extra balls
 
+    const firePort = (portSide === 'port' || portSide === true || portSide === 'both' || portSide === false || !portSide);
+    const fireStarboard = (portSide === 'starboard' || portSide === 'both' || portSide === false || !portSide);
+    // Explicitly handle when caller specifically requested one side
+    const actualFirePort = (portSide === 'starboard') ? false : true;
+    const actualFireStarboard = (portSide === 'port' || portSide === true) ? false : true;
+
     // Port (left) cannonballs
-    if (!portSide) {
+    if (actualFirePort) {
       const totalBalls = 1 + sideExtra;
       const spread = 0.25;
       const angles = [];
@@ -740,7 +750,7 @@ export class CombatSystem {
     }
 
     // Starboard (right) cannonballs
-    {
+    if (actualFireStarboard) {
       const totalBalls = 1 + sideExtra;
       const spread = 0.25;
       const angles = [];
@@ -773,13 +783,51 @@ export class CombatSystem {
       this._spawnSmoke(base, 6);
     }
 
-    // Muzzle flash on each cannon
+    // Muzzle flash on each firing cannon
     const flashL = base.clone().addScaledVector(right, -2.5);
     const flashR = base.clone().addScaledVector(right,  2.5);
-    this._flashes.push(new MuzzleFlash(this._scene, flashL));
-    if (!portSide) this._flashes.push(new MuzzleFlash(this._scene, flashR));
+    if (actualFirePort) this._flashes.push(new MuzzleFlash(this._scene, flashL));
+    if (actualFireStarboard) this._flashes.push(new MuzzleFlash(this._scene, flashR));
 
     EventEmitter.emit('combat:fired', { ship, ammo });
+    if (ship.faction === 'PLAYER') {
+      EventEmitter.emit('camera:shake', { intensity: 0.45, duration: 0.22 });
+    }
+
+    // Multiplayer broadcast of player cannon fire
+    if (window.__game?.mp?.connected && ship === window.__game?.playerShip) {
+      const posL = actualFirePort ? base.clone().addScaledVector(right, -2.5) : new THREE.Vector3();
+      const velL = actualFirePort ? right.clone().multiplyScalar(-speed).addScaledVector(ship.velocity, 0.5) : new THREE.Vector3();
+      const posR = actualFireStarboard ? base.clone().addScaledVector(right, 2.5) : new THREE.Vector3();
+      const velR = actualFireStarboard ? right.clone().multiplyScalar(speed).addScaledVector(ship.velocity, 0.5) : new THREE.Vector3();
+      window.__game.mp.sendCannonFire(posL, velL, posR, velR, ammo);
+    }
+  }
+
+  /**
+   * Spawn incoming cannonballs from remote players across network.
+   * @param {{ pL: object, vL: object, pR: object, vR: object, a: string }} data
+   */
+  spawnRemoteCannonballs(data) {
+    if (!data) return;
+    const ammo = data.a || AmmoType.ROUND;
+    const fakeOwner = { faction: 'PIRATE', cannonPower: 25, isRemote: true };
+
+    if (data.pL && (data.pL.x !== 0 || data.pL.y !== 0 || data.pL.z !== 0)) {
+      const pL = new THREE.Vector3(data.pL.x, data.pL.y, data.pL.z);
+      const vL = new THREE.Vector3(data.vL.x, data.vL.y, data.vL.z);
+      this._spawn(pL, vL, fakeOwner, ammo);
+      this._flashes.push(new MuzzleFlash(this._scene, pL));
+      this._spawnSmoke(pL, 4);
+    }
+
+    if (data.pR && (data.pR.x !== 0 || data.pR.y !== 0 || data.pR.z !== 0)) {
+      const pR = new THREE.Vector3(data.pR.x, data.pR.y, data.pR.z);
+      const vR = new THREE.Vector3(data.vR.x, data.vR.y, data.vR.z);
+      this._spawn(pR, vR, fakeOwner, ammo);
+      this._flashes.push(new MuzzleFlash(this._scene, pR));
+      this._spawnSmoke(pR, 4);
+    }
   }
 
   /**
@@ -803,9 +851,30 @@ export class CombatSystem {
     this._flashes.push(new MuzzleFlash(this._scene, startPos.clone()));
   }
 
+  /**
+   * Fire an aimed cannonball from fortress defensive cannons in Team Battle.
+   * @param {THREE.Vector3} fromPos
+   * @param {THREE.Vector3} toPos
+   * @param {number}        [power=25]
+   * @param {string}        [team=null]
+   */
+  fireAimedCannonball(fromPos, toPos, power = 25, team = null) {
+    const dir = new THREE.Vector3()
+      .subVectors(toPos, fromPos)
+      .setY(0)
+      .normalize();
+    const startPos = fromPos.clone().setY(3.0);
+    const vel = dir.multiplyScalar(GameConfig.CANNONBALL_SPEED * 0.9);
+    const fakeOwner = { faction: 'NEUTRAL', cannonPower: power, isIsland: true, team };
+    this._spawn(startPos, vel, fakeOwner);
+    this._spawnSmoke(startPos, 5);
+    this._flashes.push(new MuzzleFlash(this._scene, startPos.clone()));
+  }
+
   /** Spawn a dramatic death explosion at a world position. */
   spawnDeathExplosion(position) {
     this._explosions.push(new DeathExplosion(this._scene, position));
+    EventEmitter.emit('camera:shake', { intensity: 0.8, duration: 0.4 });
   }
 
   _spawn(position, velocity, owner, ammoType) {
@@ -845,30 +914,74 @@ export class CombatSystem {
       // Collision vs all ships (not owner)
       for (const ship of this._shipSystem.alive) {
         if (ship === ball.owner) continue;
-        // Island cannon balls must not hurt the player
-        if (ball.owner.isIsland && ship.faction === 'PLAYER') continue;
-        // Same faction — skip friendly fire
-        if (ship.faction !== 'PLAYER' && ball.owner.faction !== 'PLAYER' &&
+        // Island cannon balls must not hurt friendly players
+        if (ball.owner.isIsland && (ship.faction === 'PLAYER' || (ship.team && ship.team === ball.owner.team))) continue;
+        // Same team (Team Battle) — skip friendly fire
+        if (ship.team && ball.owner.team && ship.team === ball.owner.team) continue;
+        // Same faction in solo/coop — skip friendly fire
+        if (!ship.team && ship.faction !== 'PLAYER' && ball.owner.faction !== 'PLAYER' &&
             ship.faction === ball.owner.faction) continue;
 
-        const dist = ball.mesh.position.distanceTo(ship.group.position);
-        if (dist < GameConfig.SHIP_COLLISION_RADIUS) {
+        // Accurate oriented ship-hull collision (accounts for length, beam, and mast height)
+        const rel = ball.mesh.position.clone().sub(ship.group.position);
+        const rotY = -ship.group.rotation.y;
+        const cosA = Math.cos(rotY);
+        const sinA = Math.sin(rotY);
+        const localX = rel.x * cosA - rel.z * sinA; // sideways (beam)
+        const localZ = rel.x * sinA + rel.z * cosA; // forward/back (length)
+
+        const isLarge = (ship.shipClass === 'PIRATE_LARGE' || ship.shipClass === 'LARGE');
+        const isMedium = (ship.shipClass === 'PIRATE_MEDIUM' || ship.shipClass === 'MEDIUM');
+        const halfLength = isLarge ? 12 : isMedium ? 9.5 : 7.5;
+        const halfWidth  = isLarge ? 5.2 : isMedium ? 4.2 : 3.5;
+        const heightMin  = -1.5;
+        const heightMax  = isLarge ? 14.0 : 10.0;
+
+        const isHit = (rel.y >= heightMin && rel.y <= heightMax &&
+                       Math.abs(localX) <= halfWidth &&
+                       Math.abs(localZ) <= halfLength) ||
+                      (rel.length() < GameConfig.SHIP_COLLISION_RADIUS);
+
+        if (isHit) {
+          // Directional Damage Check (Raking Fire: shots striking stern or bow deal 1.5x damage)
+          const isSternHit = localZ < -halfLength * 0.65;
+          const isBowHit   = localZ > halfLength * 0.65;
+          const isRake     = (isSternHit || isBowHit) && Math.abs(localX) < halfWidth * 0.9;
+          const rakeMult   = isRake ? 1.5 : 1.0;
+
           // Ammo-specific damage multiplier
           const cfg = AMMO_CONFIG[ball.ammoType ?? AmmoType.ROUND];
           const berserkerMult = ball.owner._berserkerActive ? 1.4 : 1.0;
-          const baseDamage = (ball.owner.cannonPower + randRange(-5, 5)) * cfg.damageMult * berserkerMult;
+          const baseDamage = Math.round(((ball.owner.cannonPower + randRange(-4, 4)) * cfg.damageMult * berserkerMult) * rakeMult);
 
-          // Co-op client: route player hits on enemies to the host for authoritative damage
+          // Co-op / MP client: route player hits on enemies to the host for authoritative damage
           const isClientPlayerHit = this.onPlayerHitEnemy
-            && ball.owner.faction === 'PLAYER'
-            && ship.faction !== 'PLAYER';
-          if (isClientPlayerHit) {
+            && (ball.owner.faction === 'PLAYER' || ball.owner === window.__game?.playerShip)
+            && ship !== ball.owner;
+          let actualDmg = 0;
+          if (isClientPlayerHit && window.__game?.mp?.isClient) {
             // Let the callback suppress local damage (returns true = handled by network)
             this.onPlayerHitEnemy(ship, baseDamage);
+            actualDmg = Math.round(baseDamage);
           } else {
-            ship.takeDamage(baseDamage);
+            actualDmg = ship.takeDamage(baseDamage);
           }
-          EventEmitter.emit('ship:hit', { ship, damage: baseDamage });
+
+          // Player landed a hit on an enemy — trigger visual hitmarker & camera impact shake
+          const isLocalShooter = ball.owner.faction === 'PLAYER' || ball.owner === window.__game?.playerShip;
+          const isOpponent = ship !== ball.owner && (ship.faction !== 'PLAYER' || (ship.team && ship.team !== ball.owner.team));
+          if (isLocalShooter && isOpponent) {
+            const isKill = ship.health <= 0;
+            const isCrit = actualDmg >= 24 || isRake;
+            EventEmitter.emit('combat:hitmarker', { isKill, isCrit, isRake, damage: actualDmg });
+            EventEmitter.emit('camera:shake', { intensity: isKill ? 0.45 : isRake ? 0.35 : 0.22, duration: 0.18 });
+            if (isRake) {
+              window.__game?.hud?.toast(`💥 CRITICAL RAKE! ${isSternHit ? 'Stern' : 'Bow'} shattered! -${actualDmg}`, 'gold');
+            }
+          } else if (ship.faction === 'PLAYER' || ship === window.__game?.playerShip) {
+            // Player ship took damage from enemy cannon fire!
+            EventEmitter.emit('camera:shake', { intensity: 0.35, duration: 0.22 });
+          }
 
           // Knockback impulse — push ship away from impact point
           if (ship.isSailing) {
@@ -884,10 +997,9 @@ export class CombatSystem {
             const extraSlowTime = ball.owner._chainMasteryPerk ?? 0;
             ship._chainSlowTimer = (ship._chainSlowTimer ?? 0) + 3.5 + extraSlowTime;
             ship._chainSlowTimer = Math.min(ship._chainSlowTimer, 6 + extraSlowTime);
-            // Actual slow applied in ShipSystem update via ship._chainSlowTimer
           }
 
-          // Cursed Spectral Shot — apply slow debuff to player/target
+          // Cursed Spectral Shot — apply slow debuff to target
           if (ball.ammoType === AmmoType.CURSED_SPECTRAL && ship.isSailing) {
             ship._veynarSlowTimer = 4.0;
           }
@@ -921,9 +1033,29 @@ export class CombatSystem {
         }
       }
 
-      // Collision vs player-owned islands (enemy shots only)
+      // Collision vs Team Battle home islands (siege warfare)
+      if (!ball._hitIsland && (this.teamBattle?.active || window.__game?.teamBattle?.active) && ball.mesh.position.y < 15 && !ball.owner.isIsland) {
+        const tb = this.teamBattle || window.__game?.teamBattle;
+        const hitTarget = tb.checkIslandHit(ball.mesh.position, ball.owner);
+        if (hitTarget) {
+          const dmg = (ball.owner.cannonPower ?? 25) + randRange(-3, 3);
+          if (tb.onHitIsland) {
+            tb.onHitIsland(hitTarget.team, dmg, ball.owner);
+          } else {
+            tb.applyIslandDamage(hitTarget.team, dmg, ball.owner);
+          }
+          this._spawnSmoke(ball.mesh.position, 6);
+          this._flashes.push(new MuzzleFlash(this._scene, ball.mesh.position.clone()));
+          this._splashes.push(new WaterSplash(this._scene, ball.mesh.position.clone()));
+          ball.dispose();
+          this._balls.splice(i, 1);
+          continue;
+        }
+      }
+
+      // Collision vs player-owned islands (enemy shots only in single-player/co-op)
       if (!ball._hitIsland && this._islands && ball.mesh.position.y < 9
-          && ball.owner.faction !== 'PLAYER' && !ball.owner.isIsland) {
+          && ball.owner.faction !== 'PLAYER' && !ball.owner.isIsland && !window.__game?.teamBattle?.active) {
         for (const island of this._islands) {
           if (!island.captured || island.owner !== 'PLAYER') continue;
           if (dist2D(ball.mesh.position, island.position) < island.collisionRadius) {

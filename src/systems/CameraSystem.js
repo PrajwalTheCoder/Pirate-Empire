@@ -4,6 +4,7 @@
  */
 import * as THREE from 'three';
 import GameConfig from '../config/GameConfig.js';
+import EventEmitter from '../utils/EventEmitter.js';
 import { lerp } from '../utils/MathUtils.js';
 
 export class CameraSystem {
@@ -30,6 +31,15 @@ export class CameraSystem {
     // Cinematic focus target (for dialogue)
     this._focusTarget = null;
     this._focusTimer = 0;
+
+    // Screen Shake trauma state
+    this._shakeIntensity = 0;
+    this._shakeDuration  = 0;
+    this._shakeMax       = 0;
+
+    EventEmitter.on('camera:shake', ({ intensity, duration }) => {
+      this.shake(intensity, duration);
+    });
 
     // Initialise camera to a sensible default
     camera.position.set(0, GameConfig.CAMERA_OFFSET_Y, GameConfig.CAMERA_OFFSET_Z);
@@ -106,16 +116,37 @@ export class CameraSystem {
       .applyQuaternion(t.quaternion)
       .add(t.position);
 
-    // Lerp camera position for smooth lag
-    const lag = GameConfig.CAMERA_LAG;
-    this._camera.position.x = lerp(this._camera.position.x, this._desiredPos.x, lag);
-    this._camera.position.y = lerp(this._camera.position.y, this._desiredPos.y, lag * 1.5);
-    this._camera.position.z = lerp(this._camera.position.z, this._desiredPos.z, lag);
+    // Lerp camera position with delta-time independent smoothing
+    const lagFactor = 1 - Math.exp(-4.2 * delta);
+    this._camera.position.x = lerp(this._camera.position.x, this._desiredPos.x, lagFactor);
+    this._camera.position.y = lerp(this._camera.position.y, this._desiredPos.y, lagFactor * 1.5);
+    this._camera.position.z = lerp(this._camera.position.z, this._desiredPos.z, lagFactor);
+
+    // Apply procedural trauma screen shake
+    if (this._shakeDuration > 0) {
+      this._shakeDuration -= delta;
+      const progress = Math.max(0, this._shakeDuration / (this._shakeMax || 0.25));
+      const mag = this._shakeIntensity * progress;
+      this._camera.position.x += (Math.random() - 0.5) * mag * 2.2;
+      this._camera.position.y += (Math.random() - 0.5) * mag * 1.6;
+      this._camera.position.z += (Math.random() - 0.5) * mag * 2.2;
+    }
 
     // Look at a point slightly in front of and above the waterline
     this._lookAtTarget.copy(t.position);
     this._lookAtTarget.y += 1.5;
     this._camera.lookAt(this._lookAtTarget);
+  }
+
+  /**
+   * Trigger screen shake with given intensity and duration.
+   * @param {number} [intensity=0.6]
+   * @param {number} [duration=0.25]
+   */
+  shake(intensity = 0.6, duration = 0.25) {
+    this._shakeIntensity = Math.max(this._shakeIntensity || 0, intensity);
+    this._shakeDuration  = Math.max(this._shakeDuration || 0, duration);
+    this._shakeMax       = Math.max(this._shakeMax || 0, this._shakeDuration);
   }
 
   /**

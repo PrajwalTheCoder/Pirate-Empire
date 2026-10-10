@@ -33,6 +33,8 @@ import MultiplayerSystem, { QUICK_CHAT } from './systems/MultiplayerSystem.js';
 import WorldEventSystem  from './systems/WorldEventSystem.js';
 import StorySystem       from './systems/StorySystem.js';
 import MobileControls    from './systems/MobileControls.js';
+import TeamBattleSystem  from './systems/TeamBattleSystem.js';
+import TeamBattleLobbyUI from './ui/TeamBattleLobbyUI.js';
 
 // ── World ────────────────────────────────────────────────────────────────────
 import Ocean           from './world/Ocean.js';
@@ -97,6 +99,12 @@ class Game {
 
     // World events
     this.worldEvents   = null;  // WorldEventSystem
+
+    // Team Battle
+    this.isTeamBattle      = false;
+    this.teamBattle        = null;  // TeamBattleSystem
+    this.teamBattleLobby   = null;  // TeamBattleLobbyUI
+    this.teamBattleConfig  = null;
 
     // Wind Dynamics
     this.windAngle        = Math.random() * Math.PI * 2;
@@ -261,10 +269,24 @@ class Game {
     // Apply whatever the settings sliders are currently set to
     const masterSlider = document.getElementById('s-master');
     const sfxSlider    = document.getElementById('s-sfx');
+    const musicSlider  = document.getElementById('s-music');
     const masterVol    = (masterSlider ? parseInt(masterSlider.value, 10) : 80) / 100;
     const sfxVol       = (sfxSlider    ? parseInt(sfxSlider.value,    10) : 80) / 100;
-    this.audio.setVolumes(masterVol, sfxVol);
+    const musicVol     = (musicSlider  ? parseInt(musicSlider.value,  10) : 60) / 100;
+    this.audio.setVolumes(masterVol, sfxVol, musicVol);
     this.audio.start();
+
+    // Check and credit pending daily bounty claimed from main menu
+    const pendingBountyRaw = localStorage.getItem('pe_pending_daily_bounty');
+    if (pendingBountyRaw) {
+      try {
+        const bounty = JSON.parse(pendingBountyRaw);
+        if (bounty.gold) this.economy.add('gold', bounty.gold);
+        if (bounty.wood) this.economy.add('wood', bounty.wood);
+        if (bounty.crew) this.economy.add('crew', bounty.crew);
+        localStorage.removeItem('pe_pending_daily_bounty');
+      } catch {}
+    }
 
     // ── 5. UI ────────────────────────────────────────────────────────────────
     this._initUI();
@@ -433,7 +455,20 @@ class Game {
     if (this.mp) {
       this.ai.syncMode = this.mp.isHost ? 'HOST' : 'CLIENT';
     }
-    this.ai.spawnInitialEnemies();
+    if (!this.isTeamBattle) {
+      this.ai.spawnInitialEnemies();
+    } else {
+      this.teamBattle = new TeamBattleSystem(this);
+      this.combat.setTeamBattle(this.teamBattle);
+      this.teamBattle.initBattlefield();
+      this.teamBattle.setupParticipants(
+        this.playerName,
+        this.teamBattleConfig?.mode ?? '2v2',
+        this.teamBattleConfig?.botFill ?? true,
+      );
+      this.teamBattle.spawnParticipantShips();
+      this.teamBattle.startCountdown();
+    }
 
     // World Event System (Living Ocean)
     this.worldEvents = new WorldEventSystem(this.ships, this.ai, this);
@@ -486,7 +521,7 @@ class Game {
     // Show/hide reputation HUD and missions panel based on mode
     const repHud = document.getElementById('reputation-hud');
     const rightPanel = document.getElementById('right-panel');
-    if (this._storyMode) {
+    if (this._storyMode || this.isTeamBattle) {
       repHud?.classList.add('hidden');
       rightPanel?.classList.add('hidden');
     } else {
@@ -504,6 +539,9 @@ class Game {
       }
     }
     document.getElementById('world-log-ticker')?.classList.remove('hidden');
+    if (this.isTeamBattle && this.teamBattle) {
+      this.hud?.updateTeamBattleHUD(this.teamBattle.getState());
+    }
 
     // Story: reputation changes → update story-rep-hud  (fix: use story._killCount)
     EventEmitter.on('story:reputation_changed', ({ tier }) => {
@@ -933,10 +971,22 @@ class Game {
         const tx = nearest.group.position.x - ally.group.position.x;
         const tz = nearest.group.position.z - ally.group.position.z;
         const targetAngle = Math.atan2(tx, tz) + Math.PI;
-        let diff = ((targetAngle - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
-        ally.steering = Math.sign(diff) * Math.min(1, Math.abs(diff) * 3);
-        ally.thrust   = nearestDist < 60 ? 0.2 : 0.8;
-        if (nearestDist < 65) this.combat.fireCannons(ally);
+
+        if (nearestDist > 65) {
+          // Approach target: steer bow toward enemy
+          let diff = ((targetAngle - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+          ally.steering = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.5);
+          ally.thrust   = 0.85;
+        } else {
+          // Broadside battle: rotate to 90 degrees so broadside cannons face enemy
+          const broadside = targetAngle + Math.PI / 2;
+          let diff = ((broadside - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+          ally.steering = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.0);
+          ally.thrust   = 0.35;
+          if (Math.abs(diff) < 0.45) {
+            this.combat.fireCannons(ally);
+          }
+        }
       } else {
         // No enemy nearby — follow the player
         const player = this.playerShip;
@@ -1498,17 +1548,40 @@ class Game {
     const creditsPanel = document.getElementById('mm-credits-panel');
     const coopPanel = document.getElementById('mm-coop-panel');
     const leaderboardPanel = document.getElementById('mm-leaderboard-panel');
+    const dailyPanel = document.getElementById('daily-rewards-modal');
+
+    // Daily Rewards button — opens 7-day streak modal
+    document.getElementById('mm-daily')?.addEventListener('click', () => {
+      dailyPanel?.classList.toggle('hidden');
+      settingsPanel?.classList.add('hidden');
+      creditsPanel?.classList.add('hidden');
+      coopPanel?.classList.add('hidden');
+      leaderboardPanel?.classList.add('hidden');
+      if (dailyPanel && !dailyPanel.classList.contains('hidden')) {
+        this._initDailyRewards();
+      }
+    });
+    document.getElementById('daily-modal-close')?.addEventListener('click', () => {
+      dailyPanel?.classList.add('hidden');
+    });
 
     // Co-op Mode button — opens lobby panel
     document.getElementById('mm-coop')?.addEventListener('click', () => {
+      this.teamBattleLobby?.hide();
       coopPanel?.classList.toggle('hidden');
       settingsPanel?.classList.add('hidden');
       creditsPanel?.classList.add('hidden');
       leaderboardPanel?.classList.add('hidden');
+      dailyPanel?.classList.add('hidden');
       this._initCoopLobby();
     });
     document.getElementById('mm-close-coop')?.addEventListener('click', () => {
       coopPanel?.classList.add('hidden');
+    });
+
+    // Team Battle Mode button — opens lobby panel
+    document.getElementById('mm-teambattle')?.addEventListener('click', () => {
+      this._openTeamBattleLobby();
     });
 
     // Settings panel toggle
@@ -1517,6 +1590,7 @@ class Game {
       creditsPanel?.classList.add('hidden');
       coopPanel?.classList.add('hidden');
       leaderboardPanel?.classList.add('hidden');
+      dailyPanel?.classList.add('hidden');
     });
     document.getElementById('mm-close-settings')?.addEventListener('click', () => {
       settingsPanel?.classList.add('hidden');
@@ -1528,6 +1602,7 @@ class Game {
       settingsPanel?.classList.add('hidden');
       coopPanel?.classList.add('hidden');
       leaderboardPanel?.classList.add('hidden');
+      dailyPanel?.classList.add('hidden');
     });
     document.getElementById('mm-close-credits')?.addEventListener('click', () => {
       creditsPanel?.classList.add('hidden');
@@ -1542,6 +1617,7 @@ class Game {
       settingsPanel?.classList.add('hidden');
       creditsPanel?.classList.add('hidden');
       coopPanel?.classList.add('hidden');
+      dailyPanel?.classList.add('hidden');
       if (leaderboardPanel && !leaderboardPanel.classList.contains('hidden')) {
         if (leaderboardInput) leaderboardInput.value = '';
         this._showLeaderboard();
@@ -1601,13 +1677,370 @@ class Game {
           label.textContent = slider.value;
           // Sync audio volumes whenever master or sfx slider moves
           if (this.audio) {
-            const m = (document.getElementById('s-master')?.value ?? 80) / 100;
-            const s = (document.getElementById('s-sfx')?.value    ?? 80) / 100;
-            this.audio.setVolumes(m, s);
+            const m   = (document.getElementById('s-master')?.value ?? 80) / 100;
+            const s   = (document.getElementById('s-sfx')?.value    ?? 80) / 100;
+            const mus = (document.getElementById('s-music')?.value  ?? 60) / 100;
+            this.audio.setVolumes(m, s, mus);
           }
         });
       }
     });
+
+    // Check if player arrived via 1-click room invite link (?room=XYZ)
+    this._checkAutoJoinURL();
+  }
+
+  // ── Daily Rewards Ledger ──────────────────────────────────────────────────
+  _initDailyRewards() {
+    if (this._dailyRewardsInited) {
+      this._renderDailyRewardsModal();
+      return;
+    }
+    this._dailyRewardsInited = true;
+
+    const claimBtn = document.getElementById('btn-claim-daily');
+    claimBtn?.addEventListener('click', () => {
+      this._claimDailyReward();
+    });
+
+    this._renderDailyRewardsModal();
+  }
+
+  _getDailyRewardsSchedule() {
+    return [
+      { day: 1, title: 'Starter Stash',     icon: '🪙', gold: 150, wood: 20, desc: '+150 Gold, +20 Wood' },
+      { day: 2, title: 'Deckhand Crew',     icon: '👥', gold: 250, crew: 15, desc: '+250 Gold, +15 Crew' },
+      { day: 3, title: 'Plank Hoard',       icon: '🪵', gold: 400, wood: 40, desc: '+400 Gold, +40 Wood' },
+      { day: 4, title: 'Iron Armory',       icon: '💣', gold: 600, crew: 20, desc: '+600 Gold, +20 Crew' },
+      { day: 5, title: 'Sunken Chest',      icon: '💰', gold: 900, wood: 50, desc: '+900 Gold, +50 Wood' },
+      { day: 6, title: 'Armada Cache',      icon: '⚔️', gold: 1300, crew: 30, desc: '+1,300 Gold, +30 Crew' },
+      { day: 7, title: 'Black Flag Bounty', icon: '👑', gold: 2000, wood: 80, crew: 40, desc: '+2,000 Gold, +80 Wood, +40 Crew' },
+    ];
+  }
+
+  _getDailyState() {
+    try {
+      const raw = localStorage.getItem('pe_daily_streak');
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return { lastClaimTime: 0, currentStreak: 0 };
+  }
+
+  _renderDailyRewardsModal() {
+    const trackEl  = document.getElementById('daily-streak-track');
+    const claimBtn = document.getElementById('btn-claim-daily');
+    if (!trackEl) return;
+
+    const schedule = this._getDailyRewardsSchedule();
+    const state    = this._getDailyState();
+    const now      = Date.now();
+    const COOLDOWN = 20 * 60 * 60 * 1000;
+    const STREAK_EXPIRE = 48 * 60 * 60 * 1000;
+
+    const timeSinceLast = state.lastClaimTime ? (now - state.lastClaimTime) : Infinity;
+    const canClaim = state.lastClaimTime === 0 || timeSinceLast >= COOLDOWN;
+
+    let activeDay = 1;
+    if (state.lastClaimTime === 0) {
+      activeDay = 1;
+    } else if (timeSinceLast < COOLDOWN) {
+      activeDay = state.currentStreak;
+    } else if (timeSinceLast <= STREAK_EXPIRE) {
+      activeDay = (state.currentStreak % 7) + 1;
+    } else {
+      activeDay = 1;
+    }
+
+    trackEl.innerHTML = '';
+    schedule.forEach(item => {
+      const card = document.createElement('div');
+      card.className = 'daily-day-card';
+
+      const isClaimed = state.lastClaimTime > 0 && item.day <= state.currentStreak && (timeSinceLast < COOLDOWN || item.day < activeDay);
+      const isToday = item.day === activeDay && canClaim;
+
+      if (isClaimed) card.classList.add('claimed');
+      if (isToday)   card.classList.add('today');
+
+      card.innerHTML = `
+        <div class="daily-day-num">Day ${item.day}</div>
+        <div class="daily-day-icon">${item.icon}</div>
+        <div class="daily-day-reward">${item.desc}</div>
+      `;
+      trackEl.appendChild(card);
+    });
+
+    if (claimBtn) {
+      if (canClaim) {
+        claimBtn.disabled = false;
+        claimBtn.innerHTML = `⚓ &nbsp;Claim Day ${activeDay} Bounty`;
+      } else {
+        claimBtn.disabled = true;
+        const remainingMs = COOLDOWN - timeSinceLast;
+        const hours = Math.floor(remainingMs / (1000 * 60 * 60));
+        const mins  = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        claimBtn.innerHTML = `⏳ &nbsp;Next Bounty in ${hours}h ${mins}m`;
+      }
+    }
+  }
+
+  _claimDailyReward() {
+    const schedule = this._getDailyRewardsSchedule();
+    const state    = this._getDailyState();
+    const now      = Date.now();
+    const COOLDOWN = 20 * 60 * 60 * 1000;
+    const STREAK_EXPIRE = 48 * 60 * 60 * 1000;
+
+    const timeSinceLast = state.lastClaimTime ? (now - state.lastClaimTime) : Infinity;
+    if (state.lastClaimTime > 0 && timeSinceLast < COOLDOWN) return;
+
+    let nextStreak = 1;
+    if (state.lastClaimTime > 0 && timeSinceLast <= STREAK_EXPIRE) {
+      nextStreak = (state.currentStreak % 7) + 1;
+    }
+
+    const reward = schedule[nextStreak - 1];
+    const newState = {
+      lastClaimTime: now,
+      currentStreak: nextStreak,
+    };
+    try {
+      localStorage.setItem('pe_daily_streak', JSON.stringify(newState));
+    } catch {}
+
+    if (this.economy) {
+      if (reward.gold) this.economy.add('gold', reward.gold);
+      if (reward.wood) this.economy.add('wood', reward.wood);
+      if (reward.crew) this.economy.add('crew', reward.crew);
+    } else {
+      try {
+        const curPending = JSON.parse(localStorage.getItem('pe_pending_daily_bounty') || '{}');
+        curPending.gold = (curPending.gold || 0) + (reward.gold || 0);
+        curPending.wood = (curPending.wood || 0) + (reward.wood || 0);
+        curPending.crew = (curPending.crew || 0) + (reward.crew || 0);
+        localStorage.setItem('pe_pending_daily_bounty', JSON.stringify(curPending));
+      } catch {}
+    }
+
+    this.audio?.playSfx('loot');
+    if (this.hud) {
+      this.hud.toast(`🎁 Day ${nextStreak} Bounty Claimed! ${reward.desc}`, 'gold');
+    }
+
+    this._renderDailyRewardsModal();
+  }
+
+  // ── Pirate Team Battle Lobby & Match Lifecycle ─────────────────────────
+
+  /**
+   * Check if player loaded the page with a room invite link (?room=XXXXXX).
+   * Automatically opens the lobby, switches to Join Fleet, and initiates connection.
+   */
+  _checkAutoJoinURL() {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      const room = (params.get('room') || params.get('tb'))?.trim().toUpperCase();
+      if (room && room.length === 6) {
+        console.log('[MP] Auto-joining room from URL parameter:', room);
+        if (!this.teamBattleLobby) {
+          this.teamBattleLobby = new TeamBattleLobbyUI(this);
+        }
+        this.teamBattleLobby.show();
+        document.getElementById('tb-tab-join')?.click();
+        const input = document.getElementById('tb-join-input');
+        if (input) input.value = room;
+        this.joinTeamBattleRoom(room);
+      }
+    } catch (e) {
+      console.warn('[MP] Auto-join check error:', e);
+    }
+  }
+
+  _openTeamBattleLobby() {
+    // Hide other panels
+    document.getElementById('mm-settings-panel')?.classList.add('hidden');
+    document.getElementById('mm-credits-panel')?.classList.add('hidden');
+    document.getElementById('mm-coop-panel')?.classList.add('hidden');
+    document.getElementById('mm-leaderboard-panel')?.classList.add('hidden');
+    document.getElementById('daily-rewards-modal')?.classList.add('hidden');
+
+    if (!this.teamBattleLobby) {
+      this.teamBattleLobby = new TeamBattleLobbyUI(this);
+    }
+    this.teamBattleLobby.show();
+
+    // Auto-host relay room if not in MP session
+    if (!this.mp) {
+      this.mp = new MultiplayerSystem('HOST');
+      this.teamBattleLobby.setHostStatus('⚓ Initializing battle relay...');
+      this.mp.init((msg) => this.teamBattleLobby.setHostStatus(msg)).then(code => {
+        this.teamBattleLobby.setRoomCode(code);
+        this.teamBattleLobby.setHostStatus('✅ Ready! Share room code with captains');
+        this._wireTeamBattleNetworkEvents();
+      }).catch(err => {
+        this.teamBattleLobby.setHostStatus(`❌ Relay error: ${err.message}`, true);
+      });
+    } else {
+      this._wireTeamBattleNetworkEvents();
+    }
+  }
+
+  async joinTeamBattleRoom(code) {
+    if (this.mp) {
+      this.mp.disconnect?.();
+    }
+    this.mp = new MultiplayerSystem('CLIENT', code);
+    this.teamBattleLobby.setJoinStatus('🔗 Connecting to Admiral...');
+
+    try {
+      await this.mp.init((msg) => this.teamBattleLobby.setJoinStatus(msg));
+      this.teamBattleLobby.setJoinStatus('✅ Connected to battle fleet!');
+      this._wireTeamBattleNetworkEvents();
+      this.teamBattleLobby.renderRosters();
+    } catch (err) {
+      this.teamBattleLobby.setJoinStatus(`❌ ${err?.message || 'Connection failed'}`, true);
+    }
+  }
+
+  switchTeamBattleTeam(team) {
+    if (this.mp?.connected) {
+      this.mp.sendTeamBattleAction?.('SWITCH_TEAM', { team });
+    }
+  }
+
+  startTeamBattleMatch(mode, botFill) {
+    const config = {
+      mode: mode || '2v2',
+      botFill: botFill !== false,
+      localTeam: this.teamBattleLobby?.localTeam || 'CRIMSON',
+    };
+
+    if (this.mp?.isHost) {
+      this.mp.sendTeamBattleAction?.('START_MATCH', config);
+    }
+
+    this._launchTeamBattleGame(config);
+  }
+
+  _wireTeamBattleNetworkEvents() {
+    if (!this.mp) return;
+
+    this.mp.onConnected = () => {
+      this.teamBattleLobby?.renderRosters();
+      if (this.teamBattleLobby?.isOpen) {
+        this.hud?.toast('⚓ Captain joined the battle fleet!', 'success');
+      }
+    };
+
+    this.mp.onTeamBattleAction = (data) => {
+      if (data?.action === 'START_MATCH') {
+        this._launchTeamBattleGame(data.config);
+      } else if (data?.action === 'SWITCH_TEAM') {
+        this.teamBattleLobby?.renderRosters();
+      } else if (data?.action === 'REMATCH') {
+        document.getElementById('tb-victory-modal')?.classList.add('hidden');
+        if (this.teamBattle) {
+          this.teamBattle.initBattlefield();
+          this.teamBattle.spawnParticipantShips();
+          this.teamBattle.startCountdown();
+        }
+      }
+    };
+
+    this.mp.onTeamBattleState = (state) => {
+      if (this.teamBattle) {
+        this.teamBattle.applyState(state);
+      }
+    };
+
+    this.mp.onPeerShipState = (peerId, state) => {
+      if (this.teamBattle) {
+        let p = this.teamBattle.participants.find(part => part.id === peerId);
+        if (!p && !this.mp.isHost) {
+          // On client, match the non-local player participant
+          p = this.teamBattle.participants.find(part => !part.isBot && part.id !== 'local_player');
+        }
+        if (p && p.ship) {
+          p.ship.setPosition(state.x, state.y, state.z);
+          p.ship.setRotationY(state.ry);
+          p.ship.velocity?.set(state.vx, state.vy, state.vz);
+          p.ship.health = state.hp;
+          p.ship.maxHealth = state.mhp;
+        }
+      }
+    };
+
+    // Cannon fire synchronization in Team Battle
+    this.mp.onCannonFire = (data) => {
+      this.combat?.spawnRemoteCannonballs(data);
+    };
+
+    // Host: authoritatively process fortress siege damage from client cannonballs
+    if (this.mp.isHost) {
+      this.mp.onTeamBattleIslandHit = (data) => {
+        if (!this.teamBattle || !data?.targetTeam) return;
+        const safeDmg = Math.max(1, Math.min(60, Math.round(data.damage || 25)));
+        this.teamBattle.applyIslandDamage(data.targetTeam, safeDmg);
+        this.mp.sendTeamBattleState?.(this.teamBattle.getState());
+      };
+    }
+
+    EventEmitter.on('mp:peer_disconnected', ({ peerId }) => {
+      this.teamBattle?.handlePeerDisconnect(peerId);
+    });
+  }
+
+  startTeamBattleRematch() {
+    if (!this.teamBattle) return;
+    document.getElementById('tb-victory-modal')?.classList.add('hidden');
+    if (this.mp?.isHost) {
+      this.mp.sendTeamBattleAction?.('REMATCH');
+    }
+    this.teamBattle.initBattlefield();
+    this.teamBattle.spawnParticipantShips();
+    this.teamBattle.startCountdown();
+  }
+
+  returnToMainMenu() {
+    this.isTeamBattle = false;
+    this.teamBattle?.cleanBattlefield();
+    this.hud?.hideTeamBattleHUD();
+    document.getElementById('tb-victory-modal')?.classList.add('hidden');
+    if (this._islands) {
+      for (const isl of this._islands) {
+        if (isl.group) isl.group.visible = true;
+      }
+    }
+    const menu = document.getElementById('main-menu');
+    menu?.classList.remove('hidden');
+    this._showMainMenu();
+  }
+
+  _launchTeamBattleGame(config) {
+    this._menuRafRunning = false;
+    const menu = document.getElementById('main-menu');
+    menu?.classList.add('hidden');
+    document.getElementById('mm-version')?.remove();
+    this.teamBattleLobby?.hide();
+
+    this.isTeamBattle = true;
+    this.isCoop = false;
+    this._storyMode = false;
+    this.teamBattleConfig = config || { mode: '2v2', botFill: true, localTeam: 'CRIMSON' };
+
+    // Hide standard sandbox islands and debris so Team Battle arena is clean and balanced
+    if (this._islands) {
+      for (const isl of this._islands) {
+        if (isl.group) isl.group.visible = false;
+      }
+    }
+    if (this.hazards) {
+      for (const h of this.hazards.getHazards()) {
+        if (h.mesh) h.mesh.visible = false;
+      }
+    }
+
+    this._startGame();
   }
 
   // ── Co-op Lobby ─────────────────────────────────────────────────────────
@@ -2013,11 +2446,37 @@ class Game {
     this._running = true;
     this.clock.start();
     this._raf();
+
+    // Background tab fallback to keep multiplayer simulation running
+    const checkBgTick = () => {
+      if (document.hidden) {
+        if (!this._bgInterval) {
+          let lastBgTime = performance.now();
+          this._bgInterval = setInterval(() => {
+            if (!this._running) return;
+            const now = performance.now();
+            const delta = Math.min((now - lastBgTime) / 1000, 0.1);
+            lastBgTime = now;
+            this._update(delta);
+          }, 1000 / 30);
+        }
+      } else {
+        if (this._bgInterval) {
+          clearInterval(this._bgInterval);
+          this._bgInterval = null;
+        }
+        this.clock.getDelta();
+      }
+    };
+    document.addEventListener('visibilitychange', checkBgTick);
+    checkBgTick();
   }
 
   _raf() {
     if (!this._running) return;
     requestAnimationFrame(() => this._raf());
+
+    if (document.hidden) return;
 
     const delta = Math.min(this.clock.getDelta(), 0.1); // cap at 100ms
 
@@ -2194,6 +2653,15 @@ class Game {
       this.islandSys.capturedCount,
     );
 
+    // ── Floating Overhead Ship Health Bars (drop in real time when damaged) ──
+    if (this.hud) {
+      this.hud.updateShipHealthBars(
+        this.ships.alive,
+        this.playerShip?.group.position ?? null,
+        this.isTeamBattle,
+      );
+    }
+
     // ── Co-op partner overhead marker ──────────────────────────────────────────
     if (this.isCoop && this._partnerShip && this.hud) {
       const pName = this.mp?.partnerName || 'First Mate';
@@ -2246,6 +2714,7 @@ class Game {
       this._treasureMarks ?? [],
       this.isCoop ? this._partnerShip : null,
       this.isCoop ? (this.mp?.partnerName || '') : '',
+      this.isTeamBattle ? this.teamBattle : null,
     );
 
     // ── Treasure mark proximity ───────────────────────────────────────────────
@@ -2352,17 +2821,32 @@ class Game {
     // ── Audio (creak timer + wind dynamics) ──────────────────────────────────
     this.audio?.update(delta);
 
-    // ── Co-op per-frame ───────────────────────────────────────────────────────
+    // ── Multiplayer per-frame ─────────────────────────────────────────────────
+    if (this.mp) {
+      if (this.isCoop) {
+        // Tick the MP system (sends ship state, world snapshots, rescue timer, AI state)
+        this.mp.update(
+          delta,
+          this.playerShip,
+          this.mp.isHost ? this.economy   : null,
+          this.mp.isHost ? this._islands  : null,
+          this.mp.isHost ? this.ai?.getSerializableState() : null,
+          this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0,
+        );
+      } else if (this.isTeamBattle) {
+        // Team Battle: broadcast local player ship state at 20Hz
+        this.mp.update(
+          delta,
+          this.playerShip,
+          null,
+          null,
+          null,
+          0
+        );
+      }
+    }
+
     if (this.isCoop && this.mp) {
-      // Tick the MP system (sends ship state, world snapshots, rescue timer, AI state)
-      this.mp.update(
-        delta,
-        this.playerShip,
-        this.mp.isHost ? this.economy   : null,
-        this.mp.isHost ? this._islands  : null,
-        this.mp.isHost ? this.ai?.getSerializableState() : null,
-        this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0,
-      );
 
       // Update partner HUD
       const ps = this.mp.partnerState;
@@ -2430,6 +2914,18 @@ class Game {
           setTimeout(() => ind.classList.add('hidden'), 3000);
         }
       });
+    }
+
+    // ── Team Battle per-frame ───────────────────────────────────────────────
+    if (this.isTeamBattle && this.teamBattle) {
+      this.teamBattle.update(delta);
+      if (this.mp?.isHost) {
+        this._tbSyncTimer = (this._tbSyncTimer || 0) + delta;
+        if (this._tbSyncTimer >= 0.2) {
+          this._tbSyncTimer = 0;
+          this.mp.sendTeamBattleState?.(this.teamBattle.getState());
+        }
+      }
     }
 
     // ── Input: clear per-frame state ─────────────────────────────────────────
@@ -2561,22 +3057,63 @@ class Game {
       }
     }
 
-    // ── Repair at island (R key) ─────────────────────────────────────────────
+    // ── Repair (R key: Drydock at island or Emergency Field Repair in open sea) ─
     if (inp.justPressed('KeyR')) {
-      const REPAIR_COST = 500;
-      const nearIsland = this._islands.some(isl => {
-        if (!isl.captured || isl.owner !== 'PLAYER') return false;
-        const dx = isl.position.x - ship.group.position.x;
-        const dz = isl.position.z - ship.group.position.z;
-        return dx * dx + dz * dz < 35 * 35;
-      });
-      if (!nearIsland) {
-        this.hud.toast('⚓ Sail to your island to repair!', 'warning');
-      } else if (!this.economy.spend({ gold: REPAIR_COST })) {
-        this.hud.toast(`💸 Need ${REPAIR_COST} gold to repair!`, 'danger');
+      if (ship.health >= ship.maxHealth) {
+        this.hud.toast('🛡️ Hull is already at peak integrity!', 'info');
       } else {
-        ship.health = ship.maxHealth;
-        this.hud.toast('🔧 Hull fully repaired!', 'success');
+        const nearIsland = this._islands.some(isl => {
+          if (!isl.captured || isl.owner !== 'PLAYER') return false;
+          const dx = isl.position.x - ship.group.position.x;
+          const dz = isl.position.z - ship.group.position.z;
+          return dx * dx + dz * dz < 35 * 35;
+        });
+
+        if (nearIsland) {
+          const PORT_COST = 150;
+          if (!this.economy.spend({ gold: PORT_COST })) {
+            this.hud.toast(`💸 Need ${PORT_COST} gold for drydock repair!`, 'danger');
+          } else {
+            const healed = ship.maxHealth - ship.health;
+            ship.health = ship.maxHealth;
+            this.hud.spawnDamageNumber(healed, ship.group.position.clone(), 'heal');
+            this.audio?.playSfx('repair');
+            this.hud.toast(`🔧 Port drydock overhaul complete! (+${healed} HP)`, 'success');
+          }
+        } else {
+          // Open ocean field emergency repair
+          const now = performance.now() / 1000;
+          const cdRemaining = Math.max(0, 25 - (now - (this._lastFieldRepairTime || 0)));
+          if (cdRemaining > 0) {
+            this.hud.toast(`⏳ Field repair crew resting (${Math.ceil(cdRemaining)}s)`, 'warning');
+          } else {
+            const res = this.economy.resources;
+            let paid = false;
+            let usedDesc = '';
+            if ((res.wood ?? 0) >= 8) {
+              this.economy.spend({ wood: 8 });
+              paid = true;
+              usedDesc = '8 Wood';
+            } else if ((res.gold ?? 0) >= 80) {
+              this.economy.spend({ gold: 80 });
+              paid = true;
+              usedDesc = '80 Gold';
+            }
+
+            if (!paid) {
+              this.hud.toast('🪵 Need 8 Wood or 80 Gold for emergency field repairs!', 'danger');
+            } else {
+              this._lastFieldRepairTime = now;
+              const repairAmt = Math.round(ship.maxHealth * 0.35);
+              const prevHp = ship.health;
+              ship.health = Math.min(ship.maxHealth, ship.health + repairAmt);
+              const healed = ship.health - prevHp;
+              this.hud.spawnDamageNumber(healed, ship.group.position.clone(), 'heal');
+              this.audio?.playSfx('repair');
+              this.hud.toast(`🔨 Field repairs patched hull with ${usedDesc}! (+${healed} HP)`, 'success');
+            }
+          }
+        }
       }
     }
   }
@@ -2588,23 +3125,24 @@ async function bootstrap() {
   const game = new Game();
   await game.init();
 
-  // Connect hit events to floating damage numbers
-  EventEmitter.on('ship:hit', ({ ship, damage }) => {
-    if (!game.hud) return;
-    const type = ship.faction === Faction.PLAYER ? 'player' : 'enemy';
-    game.hud.spawnDamageNumber(
-      Math.round(damage),
-      ship.group.position.clone(),
-      type,
-    );
-  });
 
-  // Track kills and boss defeated
+  // Track kills, boss defeated, and Vampiric Plunder (Wreckage Siphon)
   EventEmitter.on('ship:destroyed', ({ ship }) => {
     if (ship.faction !== Faction.PLAYER) {
       game._killCount++;
       if (ship.faction === Faction.PIRATE_HUNTER) {
         game._bossDefeated = true;
+      }
+      // Wreckage Siphon: 15% maxHealth vampiric plunder to player ship on kill
+      if (game.playerShip && game.playerShip.isAlive) {
+        const siphon = Math.max(15, Math.round(game.playerShip.maxHealth * 0.15));
+        const oldHp  = game.playerShip.health;
+        game.playerShip.health = Math.min(game.playerShip.maxHealth, game.playerShip.health + siphon);
+        const actualHeal = game.playerShip.health - oldHp;
+        if (actualHeal > 0 && game.hud) {
+          game.hud.spawnDamageNumber(actualHeal, game.playerShip.group.position.clone(), 'heal');
+          game.hud.toast(`🩸 Siphoned Wreckage! +${actualHeal} HP`, 'success');
+        }
       }
     }
   });
@@ -2612,6 +3150,10 @@ async function bootstrap() {
   // Player ship destroyed — trigger cinematic + explosion
   EventEmitter.on('ship:destroyed', ({ ship }) => {
     if (ship.faction === Faction.PLAYER) {
+      if (game.isTeamBattle) {
+        // In Team Battle, player respawns at home fortress dock — do not trigger game over
+        return;
+      }
       game._onPlayerDestroyed();
     }
   });
@@ -2619,6 +3161,7 @@ async function bootstrap() {
   // Pause AI when player is gone
   EventEmitter.on('ship:sunk', ({ ship }) => {
     if (ship.faction === Faction.PLAYER) {
+      if (game.isTeamBattle) return;
       // AI stops chasing (no target remaining)
       game._isGameOver = true;
     }
@@ -2626,6 +3169,20 @@ async function bootstrap() {
 
   // Victory event
   EventEmitter.on('game:victory', () => game._showVictory());
+
+  // Team Battle Rematch event
+  EventEmitter.on('teambattle:rematch', () => {
+    if (game.teamBattle) {
+      game.teamBattle.initBattlefield();
+      game.teamBattle.setupParticipants(
+        game.playerName,
+        game.teamBattleConfig?.mode ?? '2v2',
+        game.teamBattleConfig?.botFill ?? true,
+      );
+      game.teamBattle.spawnParticipantShips();
+      game.teamBattle.startCountdown();
+    }
+  });
 
   // DEBUG-ONLY: expose game on window for browser console access.
   // Do not rely on this in production code — use injected references instead.

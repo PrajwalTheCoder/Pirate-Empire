@@ -161,8 +161,10 @@
 
       <!-- Nav buttons -->
       <nav class="mm-nav">
+        <button class="mm-btn mm-btn-teambattle" id="mm-teambattle">⚔️ &nbsp;Team Battle (2v2 / 4v4)</button>
         <button class="mm-btn mm-btn-story" id="mm-story">☠️ &nbsp;Story Mode</button>
         <button class="mm-btn mm-btn-play" id="mm-play">⚓ &nbsp;Solo Voyage</button>
+        <button class="mm-btn mm-btn-daily" id="mm-daily">🎁 &nbsp;Daily Rewards</button>
         <button class="mm-btn mm-btn-coop" id="mm-coop">🤝 &nbsp;Co-op Mode</button>
         <button class="mm-btn" id="mm-leaderboard">🏆 &nbsp;Leaderboard</button>
         <button class="mm-btn" id="mm-settings">⚙️ &nbsp;Settings</button>
@@ -409,9 +411,51 @@
        CONTROLS HINT
   ═══════════════════════════════════════════════════ -->
   <div id="controls-hint">
-    W/A/D — Sail &nbsp;|  LMB/SPACE — Aim &amp; Fire &nbsp;|  E — Interact &nbsp;|  B — Board &nbsp;|  R — Repair &nbsp;|  Q — Anchor &nbsp;|  J — Journal &nbsp;|
+    W/A/D — Sail &nbsp;|  LMB/SPACE — Aim &amp; Fire &nbsp;|  E — Interact &nbsp;|  B — Board &nbsp;|  R — Field Repair &nbsp;|  Q — Anchor &nbsp;|  J — Journal &nbsp;|
     <span id="coop-hint-extra" style="display:none"> G — Ping &nbsp;|  F — Flare &nbsp;|  Z — Chat &nbsp;| </span>
     ESC — Pause
+  </div>
+
+  <!-- ═══════════════════════════════════════════════════
+       COMBAT JUICE: CROSSHAIR, HITMARKER & KILL FEED
+  ═══════════════════════════════════════════════════ -->
+  <div id="combat-reticle">
+    <div id="hitmarker" class="hitmarker hidden">
+      <div class="hm-blade hm-top-left"></div>
+      <div class="hm-blade hm-top-right"></div>
+      <div class="hm-blade hm-bottom-left"></div>
+      <div class="hm-blade hm-bottom-right"></div>
+    </div>
+  </div>
+
+  <!-- Central Kill Confirmation & Streak Banner -->
+  <div id="kill-banner" class="kill-banner hidden">
+    <div class="kb-skull">☠</div>
+    <div class="kb-title" id="kb-title">ENEMY SHIP SUNK!</div>
+    <div class="kb-sub" id="kb-sub">+120 Gold • +15% Hull Siphoned</div>
+    <div class="kb-streak hidden" id="kb-streak">⚡ DOUBLE SINK!</div>
+  </div>
+
+  <!-- Killfeed (Top-Right Live Event Ticker) -->
+  <div id="kill-feed" class="kill-feed"></div>
+
+  <!-- ═══════════════════════════════════════════════════
+       DAILY REWARDS MODAL (7-Day Streak Calendar)
+  ═══════════════════════════════════════════════════ -->
+  <div id="daily-rewards-modal" class="mm-panel daily-modal hidden">
+    <button class="mm-panel-close" id="daily-modal-close">✕</button>
+    <div class="daily-header">
+      <div class="daily-skull">🎁</div>
+      <h2 class="mm-panel-title">Captain's Daily Ledger</h2>
+      <p class="daily-sub">Log in daily to claim gold, supplies, and legendary fleet perks!</p>
+    </div>
+    <div class="daily-streak-track" id="daily-streak-track">
+      <!-- Injected dynamically by DailyRewardSystem -->
+    </div>
+    <div class="daily-footer">
+      <button class="mm-btn mm-btn-play" id="btn-claim-daily">⚓ &nbsp;Claim Today's Bounty</button>
+      <div class="daily-status" id="daily-status">Ready to claim!</div>
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════════════════

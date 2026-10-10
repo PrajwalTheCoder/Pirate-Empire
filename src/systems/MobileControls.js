@@ -31,7 +31,10 @@ export class MobileControls {
   }
 
   _isTouchDevice() {
-    return ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const hasTouch = ('ontouchstart' in window) || (navigator.maxTouchPoints > 0);
+    const isCoarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+    const isMobileWidth = window.innerWidth <= 1024;
+    return hasTouch && (isCoarse || isMobileWidth);
   }
 
   _init() {

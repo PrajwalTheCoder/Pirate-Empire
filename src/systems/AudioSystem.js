@@ -41,6 +41,8 @@ export class AudioSystem {
     // Volume settings 0..1  (mirrored from settings sliders)
     this._masterVol = 0.8;
     this._sfxVol    = 0.8;
+    this._musicVol  = 0.6;
+    this._musicGain = null;
 
     this._started = false;
   }
@@ -70,13 +72,19 @@ export class AudioSystem {
     this._ambGain.gain.value = 0.55;
     this._ambGain.connect(this._masterGain);
 
-    // ── SFX sub-bus (cannon, creak, explosion feed into this)
+    // ── SFX sub-bus (cannon, creak, explosion, hitmarkers feed into this)
     this._sfxGain = this._ctx.createGain();
     this._sfxGain.gain.value = this._sfxVol;
     this._sfxGain.connect(this._masterGain);
 
+    // ── Music sub-bus (procedural ocean maritime theme)
+    this._musicGain = this._ctx.createGain();
+    this._musicGain.gain.value = this._musicVol;
+    this._musicGain.connect(this._masterGain);
+
     this._startWaves();
     this._startWind();
+    this._startSeaMusic();
     this._bindEvents();
   }
 
@@ -89,14 +97,19 @@ export class AudioSystem {
    * Apply volume settings from the settings panel sliders.
    * @param {number} master  0..1
    * @param {number} sfx     0..1
+   * @param {number} [music] 0..1
    */
-  setVolumes(master, sfx) {
+  setVolumes(master, sfx, music = null) {
     this._masterVol = master;
     this._sfxVol    = sfx;
+    if (music !== null) this._musicVol = music;
     if (!this._ctx) return;
     const t = this._ctx.currentTime;
     this._masterGain?.gain.setTargetAtTime(master, t, 0.08);
-    this._sfxGain?.gain.setTargetAtTime(sfx,    t, 0.08);
+    this._sfxGain?.gain.setTargetAtTime(sfx,       t, 0.08);
+    if (this._musicGain && music !== null) {
+      this._musicGain.gain.setTargetAtTime(music,  t, 0.08);
+    }
   }
 
   /** Play book-flipping/parchment-rustle sound effect. */
@@ -137,9 +150,13 @@ export class AudioSystem {
       this._playCannonBoom(ship);
     });
 
+    // Enemy ship destroyed — explosion + victorious fanfare
     EventEmitter.on('ship:destroyed', ({ ship }) => {
       const pos = ship?.group?.position;
       if (pos) this._playExplosion(pos);
+      if (ship?.faction !== 'PLAYER') {
+        this._playKillFanfare();
+      }
     });
 
     // Loot / chest collected — bright chime
@@ -149,11 +166,25 @@ export class AudioSystem {
     // Island captured — triumphant chord
     EventEmitter.on('island:captured', () => this._playCapture());
 
-    // Player ship struck by cannonball — hull thud
+    // Ship struck by cannonball
     EventEmitter.on('ship:hit', ({ ship }) => {
       if (ship?.faction === 'PLAYER') {
         this._playHullHit(ship.group.position);
+      } else {
+        // Player hit an enemy ship — crisp audio hit confirmation!
+        this._playHitConfirm(false);
       }
+    });
+
+    // Explicit hitmarker event
+    EventEmitter.on('combat:hitmarker', ({ isKill, isCrit }) => {
+      this._playHitConfirm(isKill || isCrit);
+    });
+
+    // Ship ramming collision event
+    EventEmitter.on('ship:rammed', ({ rammer, victim }) => {
+      const pos = rammer?.group?.position || victim?.group?.position;
+      this._playRamCrunch(pos);
     });
   }
 
@@ -225,6 +256,54 @@ export class AudioSystem {
     }
   }
 
+  /** Crisp hit confirmation sound (metallic tick + wooden splinter crack). */
+  _playHitConfirm(isCritical = false) {
+    if (!this._ctx) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime;
+
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = isCritical ? 'triangle' : 'sine';
+    const baseFreq = isCritical ? 1760 : 1320;
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 1.4, now + 0.08);
+
+    const vol = Math.min(0.55, this._sfxVol * 0.45);
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.12);
+  }
+
+  /** Victorious pirate bell / kill fanfare when an enemy ship sinks. */
+  _playKillFanfare() {
+    if (!this._ctx) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime;
+
+    // Resonant maritime bell chord (D minor triad D4, F4, A4, D5)
+    [293.66, 349.23, 440.0, 587.33].forEach((freq, idx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(freq, now + idx * 0.05);
+
+      const delay = idx * 0.05;
+      gain.gain.setValueAtTime(0, now);
+      gain.gain.setValueAtTime(this._sfxVol * 0.35, now + delay);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + delay + 1.2);
+
+      osc.connect(gain);
+      gain.connect(this._sfxGain);
+      osc.start(now + delay);
+      osc.stop(now + delay + 1.25);
+    });
+  }
+
   /** Low hull-thud when the player is hit. */
   _playHullHit(pos) {
     if (!this._ctx) return;
@@ -254,6 +333,59 @@ export class AudioSystem {
     lp.connect(amp);
     amp.connect(this._masterGain);
     src.start();
+  }
+
+  // ── Procedural Ocean Maritime Music Synthesizer ───────────────────────────
+
+  _startSeaMusic() {
+    if (!this._ctx || !this._musicGain) return;
+    const ctx = this._ctx;
+
+    // Gentle chord progression in D minor: Dm → Bb → C → Am (looping every 16 seconds)
+    const chords = [
+      [146.83, 174.61, 220.00], // Dm (D3, F3, A3)
+      [116.54, 146.83, 174.61], // Bb (Bb2, D3, F3)
+      [130.81, 164.81, 196.00], // C  (C3, E3, G3)
+      [110.00, 130.81, 164.81], // Am (A2, C3, E3)
+    ];
+
+    let chordIdx = 0;
+    const scheduleNextChord = () => {
+      if (!this._ctx) return;
+      const now = ctx.currentTime;
+      const chord = chords[chordIdx];
+      chordIdx = (chordIdx + 1) % chords.length;
+
+      // Soft ambient organ/pad oscillators
+      chord.forEach(freq => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const lp = ctx.createBiquadFilter();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(freq, now);
+
+        lp.type = 'lowpass';
+        lp.frequency.setValueAtTime(320, now);
+        lp.frequency.linearRampToValueAtTime(450, now + 2.0);
+        lp.frequency.linearRampToValueAtTime(280, now + 3.8);
+
+        gain.gain.setValueAtTime(0.001, now);
+        gain.gain.linearRampToValueAtTime(0.045, now + 1.2);
+        gain.gain.linearRampToValueAtTime(0.001, now + 3.9);
+
+        osc.connect(lp);
+        lp.connect(gain);
+        gain.connect(this._musicGain);
+
+        osc.start(now);
+        osc.stop(now + 4.0);
+      });
+
+      // Schedule next chord
+      setTimeout(scheduleNextChord, 3900);
+    };
+
+    scheduleNextChord();
   }
 
   // ── Private: ambient — ocean waves ───────────────────────────────────────
@@ -479,6 +611,84 @@ export class AudioSystem {
     nGain2.connect(this._sfxGain);
     nSrc2.start(now);
     nSrc2.stop(now + 0.12);
+  }
+
+  // ── Private: SFX — hit confirmation sound ────────────────────────────────
+  _playHitConfirm(isCritOrKill = false) {
+    if (!this._ctx) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime;
+
+    // Crisp high attack transient ping + woody thud
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = isCritOrKill ? 'triangle' : 'sine';
+    const baseFreq = isCritOrKill ? 1200 : 880;
+    osc.frequency.setValueAtTime(baseFreq, now);
+    osc.frequency.exponentialRampToValueAtTime(baseFreq * 0.45, now + 0.12);
+
+    const vol = isCritOrKill ? 0.45 : 0.30;
+    gain.gain.setValueAtTime(vol, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + (isCritOrKill ? 0.22 : 0.12));
+
+    osc.connect(gain);
+    gain.connect(this._sfxGain);
+    osc.start(now);
+    osc.stop(now + (isCritOrKill ? 0.22 : 0.12));
+
+    // For critical rake / kill, add a heavy resonant bass thump
+    if (isCritOrKill) {
+      const sub = ctx.createOscillator();
+      const subGain = ctx.createGain();
+      sub.type = 'sine';
+      sub.frequency.setValueAtTime(140, now);
+      sub.frequency.exponentialRampToValueAtTime(45, now + 0.25);
+      subGain.gain.setValueAtTime(0.5, now);
+      subGain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      sub.connect(subGain);
+      subGain.connect(this._sfxGain);
+      sub.start(now);
+      sub.stop(now + 0.25);
+    }
+  }
+
+  // ── Private: SFX — ship ramming collision crunch ────────────────────────
+  _playRamCrunch(position) {
+    if (!this._ctx) return;
+    const ctx = this._ctx;
+    const now = ctx.currentTime;
+    const vol = this._distVol(position, 200);
+
+    // Deep hull thud
+    const osc = ctx.createOscillator();
+    const oGain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(95, now);
+    osc.frequency.exponentialRampToValueAtTime(25, now + 0.45);
+    oGain.gain.setValueAtTime(vol * 0.9, now);
+    oGain.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+    osc.connect(oGain);
+    oGain.connect(this._sfxGain);
+    osc.start(now);
+    osc.stop(now + 0.5);
+
+    // Heavy wooden splinter noise burst
+    const dur = 0.4;
+    const nBuf = this._makeNoiseBuf(dur);
+    const nSrc = ctx.createBufferSource();
+    nSrc.buffer = nBuf;
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 450;
+    bp.Q.value = 3.5;
+    const nGain = ctx.createGain();
+    nGain.gain.setValueAtTime(vol * 0.75, now);
+    nGain.gain.exponentialRampToValueAtTime(0.001, now + dur);
+    nSrc.connect(bp);
+    bp.connect(nGain);
+    nGain.connect(this._sfxGain);
+    nSrc.start(now);
+    nSrc.stop(now + dur);
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────

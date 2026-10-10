@@ -21,14 +21,14 @@ export class Minimap {
    * @param {number}       worldSize
    */
   constructor(shipSystem, islandSystem, worldSize) {
-    this._ships   = shipSystem;
+    this._ships = shipSystem;
     this._islands = islandSystem;
-    this._world   = worldSize;
+    this._world = worldSize;
 
-    this._canvas  = document.getElementById('minimap');
-    this._ctx     = this._canvas ? this._canvas.getContext('2d') : null;
-    this._W       = 180;
-    this._H       = 180;
+    this._canvas = document.getElementById('minimap');
+    this._ctx = this._canvas ? this._canvas.getContext('2d') : null;
+    this._W = 180;
+    this._H = 180;
 
     // Fog of war: set of island indices the player has sailed near
     this._discovered = new Set();
@@ -37,8 +37,8 @@ export class Minimap {
   /** Convert world XZ to minimap pixel (0..W, 0..H). */
   _toMap(x, z) {
     return {
-      px: ( x / this._world + 0.5) * this._W,
-      py: ( z / this._world + 0.5) * this._H,
+      px: (x / this._world + 0.5) * this._W,
+      py: (z / this._world + 0.5) * this._H,
     };
   }
 
@@ -72,7 +72,7 @@ export class Minimap {
 
     // Grid lines
     ctx.strokeStyle = 'rgba(30,70,120,0.4)';
-    ctx.lineWidth   = 0.5;
+    ctx.lineWidth = 0.5;
     for (let i = 0; i <= 4; i++) {
       const x = (i / 4) * W;
       const y = (i / 4) * H;
@@ -103,6 +103,53 @@ export class Minimap {
       }
     });
 
+    // ── Team Battle Symmetrical Arena Overlay ──────────────────────────────────
+    if (window.__game?.teamBattle?.active) {
+      const tb = window.__game.teamBattle;
+
+      // 1. Crimson Corsairs Fortress (West: -340, 0)
+      const ptA = this._toMap(-340, 0);
+      ctx.fillStyle = '#8e3434';
+      ctx.beginPath();
+      ctx.arc(ptA.px, ptA.py, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#ff6b6b';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // 2. Black Tide Raiders Fortress (East: 340, 0)
+      const ptB = this._toMap(340, 0);
+      ctx.fillStyle = '#142b3a';
+      ctx.beginPath();
+      ctx.arc(ptB.px, ptB.py, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = '#5cb8ff';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+
+      // 3. Central Flag Island (Center: 0, 0)
+      const ptC = this._toMap(0, 0);
+      const flagClr = tb.flagOwner === 'CRIMSON' ? '#8e3434' : tb.flagOwner === 'BLACK_TIDE' ? '#142b3a' : '#d8c49a';
+      ctx.fillStyle = flagClr;
+      ctx.beginPath();
+      ctx.arc(ptC.px, ptC.py, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = tb.isContested ? '#ffaa00' : '#ffffff';
+      ctx.lineWidth = tb.isContested ? 2.5 : 1.2;
+      ctx.stroke();
+
+      // 4. Team Ships
+      for (const p of tb.participants) {
+        if (!p.ship?.isAlive || !p.ship.group) continue;
+        const sPt = this._toMap(p.ship.group.position.x, p.ship.group.position.z);
+        const isLocal = p.ship === window.__game?.playerShip;
+        ctx.fillStyle = isLocal ? '#ffffff' : (p.team === 'CRIMSON' ? '#ff4040' : '#40a0ff');
+        ctx.beginPath();
+        ctx.arc(sPt.px, sPt.py, isLocal ? 3.5 : 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     // ── Watch Tower Vision Circles ─────────────────────────────────────────────
     const VISION_R_WORLD = 80;
     const visionRpx = (VISION_R_WORLD / this._world) * this._W;
@@ -111,8 +158,8 @@ export class Minimap {
       if (!island.buildings?.includes('WATCH_TOWER')) continue;
       const { px, py } = this._toMap(island.position.x, island.position.z);
       ctx.strokeStyle = 'rgba(0,220,255,0.4)';
-      ctx.fillStyle   = 'rgba(0,180,255,0.08)';
-      ctx.lineWidth   = 0.8;
+      ctx.fillStyle = 'rgba(0,180,255,0.08)';
+      ctx.lineWidth = 0.8;
       ctx.beginPath();
       ctx.arc(px, py, visionRpx, 0, Math.PI * 2);
       ctx.fill();
@@ -157,7 +204,7 @@ export class Minimap {
       if (mark.found) continue;
       const { px, py } = this._toMap(mark.x, mark.z);
       ctx.strokeStyle = '#ff6600';
-      ctx.lineWidth   = 1.5;
+      ctx.lineWidth = 1.5;
       // Draw X
       ctx.beginPath();
       ctx.moveTo(px - 4, py - 4); ctx.lineTo(px + 4, py + 4);
@@ -185,8 +232,8 @@ export class Minimap {
       ctx.shadowBlur = 4;
       ctx.beginPath();
       ctx.moveTo(0, -6);
-      ctx.lineTo( 3.5,  3.5);
-      ctx.lineTo(-3.5,  3.5);
+      ctx.lineTo(3.5, 3.5);
+      ctx.lineTo(-3.5, 3.5);
       ctx.closePath();
       ctx.fill();
       ctx.shadowBlur = 0;
@@ -213,8 +260,8 @@ export class Minimap {
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
       ctx.moveTo(0, -5);
-      ctx.lineTo( 3,  3);
-      ctx.lineTo(-3,  3);
+      ctx.lineTo(3, 3);
+      ctx.lineTo(-3, 3);
       ctx.closePath();
       ctx.fill();
 
@@ -223,24 +270,24 @@ export class Minimap {
 
     // ── Border ─────────────────────────────────────────────────────────────────
     ctx.strokeStyle = 'rgba(139,90,26,0.6)';
-    ctx.lineWidth   = 1;
+    ctx.lineWidth = 1;
     ctx.strokeRect(0, 0, W, H);
 
     // ── Compass N ────────────────────────────────────────────────────────────
     ctx.fillStyle = 'rgba(240,192,64,0.7)';
-    ctx.font      = 'bold 9px sans-serif';
+    ctx.font = 'bold 9px sans-serif';
     ctx.fillText('N', W - 10, 11);
   }
 
   // ── 5-point star helper ────────────────────────────────────────────────────
   _drawStar(ctx, cx, cy, r) {
     const inner = r * 0.45;
-    const pts   = 5;
+    const pts = 5;
     for (let i = 0; i < pts * 2; i++) {
       const angle = (i * Math.PI) / pts - Math.PI / 2;
-      const rad   = i % 2 === 0 ? r : inner;
-      const x     = cx + Math.cos(angle) * rad;
-      const y     = cy + Math.sin(angle) * rad;
+      const rad = i % 2 === 0 ? r : inner;
+      const x = cx + Math.cos(angle) * rad;
+      const y = cy + Math.sin(angle) * rad;
       i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
     }
     ctx.closePath();

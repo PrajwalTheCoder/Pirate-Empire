@@ -135,28 +135,49 @@ const FACTION_IDX = {
 const IDX_FACTION = Object.fromEntries(Object.entries(FACTION_IDX).map(([k,v]) => [v,k]));
 
 /** FNV-1a 32-bit hash — maps a ship.id string to a stable uint32. */
-function fnv32(str) {
+/** FNV-1a 32-bit hash — maps a ship.id string to a stable uint32. */
+export function fnv32(str) {
   let h = 0x811c9dc5;
   for (let i = 0; i < str.length; i++) {
     h ^= str.charCodeAt(i);
     h = (h * 0x01000193) >>> 0;
   }
-  return h;
+  return h >>> 0;
 }
 
-/** Inverse map: hash → id string (populated lazily on the host, sent with full AI layout). */
+/** Bi-directional maps: hash ↔ id string */
 const _hashToId = new Map();
+const _idToHash = new Map();
 
-/** Register a ship id → hash mapping so the client can look up strings from hashes. */
+/** Register a ship id → hash mapping so both host and client can look up strings from hashes. */
 export function registerShipId(id) {
   const h = fnv32(id);
   _hashToId.set(h, id);
+  _idToHash.set(id, h);
   return h;
+}
+
+/** Register explicit pairing */
+export function registerShipIdWithHash(id, hash) {
+  const h = hash >>> 0;
+  _hashToId.set(h, id);
+  _idToHash.set(id, h);
 }
 
 /** Look up a string id from its hash. Returns null if unknown. */
 export function resolveShipId(hash) {
-  return _hashToId.get(hash) ?? null;
+  return _hashToId.get(hash >>> 0) ?? null;
+}
+
+/** Look up hash from string id */
+export function getShipHash(id) {
+  if (typeof id === 'number') return id >>> 0;
+  if (_idToHash.has(id)) return _idToHash.get(id);
+  if (typeof id === 'string' && id.startsWith('ghost_')) {
+    const parsed = parseInt(id.slice(6), 16);
+    if (!isNaN(parsed)) return parsed >>> 0;
+  }
+  return fnv32(String(id));
 }
 
 export function packAIState(stateArray) {
@@ -197,7 +218,11 @@ export function unpackAIState(buf) {
   let offset = 6;
   for (let i = 0; i < count; i++) {
     const hash  = v.getUint32(offset, false);
-    const id    = resolveShipId(hash) ?? `ghost_${hash.toString(16)}`;
+    let id      = resolveShipId(hash);
+    if (!id) {
+      id = `ghost_${hash.toString(16)}`;
+      registerShipIdWithHash(id, hash);
+    }
     const x     = v.getInt16 (offset + 4, false) / 10;
     const z     = v.getInt16 (offset + 6, false) / 10;
     const ry    = decodeAngle(v.getUint8(offset + 8));
@@ -205,7 +230,7 @@ export function unpackAIState(buf) {
     const flags = v.getUint8 (offset + 11);
     const cls   = IDX_CLASS  [(flags >> 4) & 0xF] ?? 'PIRATE_SMALL';
     const fac   = IDX_FACTION[flags & 0xF]        ?? 'PIRATE';
-    ships.push({ id, cls, fac, x, z, ry, hp, mhp: hp }); // mhp not transmitted (saves 2 bytes); set to hp as placeholder
+    ships.push({ id, cls, fac, x, z, ry, hp, mhp: hp, netHash: hash });
     offset += 12;
   }
   return { ts, ships };
@@ -264,7 +289,7 @@ export function packDamageEvent(shipId, damage) {
   const buf = new ArrayBuffer(7);
   const v   = new DataView(buf);
   v.setUint8 (0, TYPE.DAMAGE_EVENT);
-  v.setUint32(1, fnv32(shipId) >>> 0, false);
+  v.setUint32(1, getShipHash(shipId) >>> 0, false);
   v.setUint16(5, Math.round(clamp(damage, 0, 65535)), false);
   return buf;
 }
@@ -273,7 +298,7 @@ export function packDamageRequest(shipId, damage) {
   const buf = new ArrayBuffer(7);
   const v   = new DataView(buf);
   v.setUint8 (0, TYPE.DMG_REQUEST);
-  v.setUint32(1, fnv32(shipId) >>> 0, false);
+  v.setUint32(1, getShipHash(shipId) >>> 0, false);
   v.setUint16(5, Math.round(clamp(damage, 0, 65535)), false);
   return buf;
 }
@@ -282,8 +307,9 @@ export function unpackDamage(buf) {
   const v    = new DataView(buf);
   const hash = v.getUint32(1, false);
   return {
-    id:  resolveShipId(hash) ?? `unknown_${hash.toString(16)}`,
-    dmg: v.getUint16(5, false),
+    id:   resolveShipId(hash) ?? `ghost_${hash.toString(16)}`,
+    hash: hash >>> 0,
+    dmg:  v.getUint16(5, false),
   };
 }
 

@@ -1129,6 +1129,9 @@ export class StorySystem {
         joinedBlackFleet: this.game?._joinedBlackFleet || false,
         dialogueHistory: this._dialogueHistory,
         cassIsDead: this._cassIsDead,
+        playerShipClass: this.game?.playerShip?.type || null,
+        purchasedUpgrades: this.game?.economy?._upgrades ? Object.keys(this.game.economy._upgrades) : [],
+        resources: this.game?.economy?.resources ? { ...this.game.economy.resources } : null,
       };
       localStorage.setItem('pe_story_progress', JSON.stringify(state));
     } catch {}
@@ -1154,6 +1157,23 @@ export class StorySystem {
         setTimeout(() => {
           if (this.game.sky) this.game.sky.setBloodMoonIntensity(1.0);
         }, 1200);
+      }
+
+      // Restore economy resources and upgrades
+      if (this.game && state.resources && this.game.economy) {
+        this.game.economy.resources = { ...this.game.economy.resources, ...state.resources };
+        EventEmitter.emit('economy:changed', { ...this.game.economy.resources });
+      }
+      if (this.game && Array.isArray(state.purchasedUpgrades) && this.game.economy) {
+        for (const upgId of state.purchasedUpgrades) {
+          this.game.economy._upgrades[upgId] = true;
+        }
+      }
+      // Upgrade ship class if saved as a higher tier
+      if (this.game && state.playerShipClass && state.playerShipClass !== this.game.playerShip?.type) {
+        setTimeout(() => {
+          this.game._upgradePlayerShip(state.playerShipClass);
+        }, 300);
       }
     } catch {}
   }

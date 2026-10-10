@@ -48,6 +48,12 @@ export const MSG = {
   SYNC_WORLD:       'SY',
   WORLD_LAYOUT:     'WL',
   VERSION_HELLO:    'VH',
+  // Team Battle messages
+  TB_STATE:         'TBS',
+  TB_LOBBY:         'TBL',
+  TB_ACTION:        'TBA',
+  TB_FLAG_EVENT:    'TBF',
+  TB_ISLAND_HIT:    'TBI',
   // Legacy aliases kept so external callers don't break
   SHIP_STATE:       'SS',
   CANNON_FIRE:      'CF',
@@ -86,6 +92,7 @@ export class MultiplayerSystem {
 
     this._peer      = null;   // PeerJS Peer instance
     this._conn      = null;   // DataConnection to partner
+    this._connections = new Map(); // peerId -> conn (for multi-peer star topology)
     this.connected  = false;
 
     this._syncTimer      = 0;
@@ -109,10 +116,14 @@ export class MultiplayerSystem {
     this._rescueTimer   = 0;
     this._rescueActive  = false;
 
+    // Multi-peer state map (peerId -> latest state)
+    this.peerStates = new Map();
+
     // Callbacks set by Game
     this.onConnected        = null;   // () => void
     this.onDisconnected     = null;   // () => void
     this.onPartnerShipState = null;   // (state) => void
+    this.onPeerShipState    = null;   // (peerId, state) => void
     this.onCannonFire       = null;   // (data) => void
     this.onDamageEvent      = null;   // (data) => void
     this.onPerkPickup       = null;   // (data) => void
@@ -127,6 +138,7 @@ export class MultiplayerSystem {
     this.onDamageRequest    = null;   // ({id, dmg}) => void   — host receives hit request
     this.onWorldLayout      = null;   // (layoutData) => void  — client receives island/loot layout
     this.onWorldLayoutAck   = null;   // () => void            — host receives client ACK for world layout
+    this.onTeamBattleIslandHit = null; // (data) => void       — host receives fortress damage from client
 
     // Version mismatch flag — set when partner runs an incompatible protocol version
     this._versionMismatch = false;
@@ -169,6 +181,7 @@ export class MultiplayerSystem {
 
         this._peer.on('connection', (conn) => {
           this._conn = conn;
+          this._connections.set(conn.peer, conn);
           this._setupConnection(conn);
         });
 
@@ -372,18 +385,34 @@ export class MultiplayerSystem {
     });
 
     conn.on('data', (raw) => {
-      this._handleBinary(raw);
+      this._handleBinary(raw, conn.peer);
     });
 
     conn.on('close', () => {
-      this.connected = false;
-      this.onDisconnected?.();
-      EventEmitter.emit('mp:disconnected');
+      this._connections.delete(conn.peer);
+      this.peerStates.delete(conn.peer);
+      if (this._connections.size === 0) {
+        this.connected = false;
+        this.onDisconnected?.();
+        EventEmitter.emit('mp:disconnected');
+      }
+      EventEmitter.emit('mp:peer_disconnected', { peerId: conn.peer });
     });
 
     conn.on('error', (err) => {
       console.error('[MP] Connection error:', err);
     });
+  }
+
+  // ── Multi-peer relay helper ───────────────────────────────────────────────
+  /** Relay a raw binary packet to all connected peers except the sender. */
+  _relayBinExcept(buffer, excludePeerId) {
+    if (!this.isHost || this._connections.size <= 1) return;
+    for (const [peerId, conn] of this._connections) {
+      if (peerId !== excludePeerId && conn.open) {
+        try { conn.send(buffer); } catch (e) {}
+      }
+    }
   }
 
   // ── Message handling (binary dispatch) ────────────────────────────────────
@@ -392,7 +421,7 @@ export class MultiplayerSystem {
    * Primary receive handler. Accepts ArrayBuffer (binary packets) or
    * legacy strings/objects (graceful fallback for old clients).
    */
-  _handleBinary(raw) {
+  _handleBinary(raw, senderPeerId = null) {
     try {
       // ── Binary path (v2 protocol) ──────────────────────────────────────────
       if (raw instanceof ArrayBuffer) {
@@ -402,8 +431,13 @@ export class MultiplayerSystem {
         switch (typeId) {
           // ── High-frequency binary messages ─────────────────────────────────
           case NetPacker.TYPE.SHIP_STATE:
+            if (senderPeerId) this.peerStates.set(senderPeerId, payload);
             this.partnerState = payload;
             this.onPartnerShipState?.(payload);
+            this.onPeerShipState?.(senderPeerId, payload);
+            if (this.isHost && senderPeerId) {
+              this._relayBinExcept(raw, senderPeerId);
+            }
             break;
 
           case NetPacker.TYPE.AI_STATE:
@@ -416,16 +450,32 @@ export class MultiplayerSystem {
 
           case NetPacker.TYPE.CANNON_FIRE:
             this.onCannonFire?.(payload);
+            if (this.isHost && senderPeerId) {
+              this._relayBinExcept(raw, senderPeerId);
+            }
             break;
 
           case NetPacker.TYPE.DAMAGE_EVENT:
             this.onDamageEvent?.(payload);
             break;
 
-          case NetPacker.TYPE.DMG_REQUEST:
+          case NetPacker.TYPE.DMG_REQUEST: {
+            // Authoritative damage bounds sanity check (anti-cheat)
+            const safeDmg = Math.max(1, Math.min(80, Math.round(payload.dmg ?? 15)));
+            payload.dmg = safeDmg;
+            payload.senderPeerId = senderPeerId;
+
+            // Rate limiting: at most 1 hit per 80ms per sender
+            const now = performance.now();
+            if (!this._lastDamageRequestTime) this._lastDamageRequestTime = new Map();
+            const lastTime = this._lastDamageRequestTime.get(senderPeerId) || 0;
+            if (now - lastTime < 80) break;
+            this._lastDamageRequestTime.set(senderPeerId, now);
+
             this.onDamageRequest?.(payload);
             EventEmitter.emit('mp:dmg_request', payload);
             break;
+          }
 
           case NetPacker.TYPE.WORLD_LAYOUT_ACK:
             console.log('[MP] WORLD_LAYOUT_ACK received from client — stopping retries.');
@@ -514,6 +564,27 @@ export class MultiplayerSystem {
         this.onWorldLayout?.(msg.d);
         EventEmitter.emit('mp:world_layout', msg.d);
         break;
+      // Team Battle messages
+      case MSG.TB_STATE:
+        this.onTeamBattleState?.(msg.d);
+        EventEmitter.emit('mp:tb_state', msg.d);
+        break;
+      case MSG.TB_LOBBY:
+        this.onTeamBattleLobby?.(msg.d);
+        EventEmitter.emit('mp:tb_lobby', msg.d);
+        break;
+      case MSG.TB_ACTION:
+        this.onTeamBattleAction?.(msg.d);
+        EventEmitter.emit('mp:tb_action', msg.d);
+        break;
+      case MSG.TB_FLAG_EVENT:
+        this.onTeamBattleFlagEvent?.(msg.d);
+        EventEmitter.emit('mp:tb_flag_event', msg.d);
+        break;
+      case MSG.TB_ISLAND_HIT:
+        this.onTeamBattleIslandHit?.(msg.d);
+        EventEmitter.emit('mp:tb_island_hit', msg.d);
+        break;
       // Legacy JSON paths for old binary messages (backward compat)
       case 'SS':
         this.partnerState = msg.d;
@@ -543,11 +614,17 @@ export class MultiplayerSystem {
    * Used for high-frequency messages (ship state, AI state, cannon fire, damage).
    */
   _sendBin(buffer) {
-    if (!this._conn || !this.connected) return;
-    try {
-      this._conn.send(buffer);
-    } catch (e) {
-      // Ignore send errors (network blip) — next frame will retry
+    if (!this.connected) return;
+    if (this.isHost && this._connections.size > 0) {
+      for (const [_, conn] of this._connections) {
+        if (conn.open) {
+          try { conn.send(buffer); } catch (e) {}
+        }
+      }
+      return;
+    }
+    if (this._conn && this._conn.open) {
+      try { this._conn.send(buffer); } catch (e) {}
     }
   }
 
@@ -558,13 +635,37 @@ export class MultiplayerSystem {
    * @param {*}      data  — JSON-serializable payload
    */
   _sendJSON(type, data) {
-    if (!this._conn || !this.connected) return;
-    try {
-      this._conn.send(NetPacker.packJSON(type, data));
-    } catch (e) {
-      // Ignore
+    if (!this.connected) return;
+    const packed = NetPacker.packJSON(type, data);
+    if (this.isHost && this._connections.size > 0) {
+      for (const [_, conn] of this._connections) {
+        if (conn.open) {
+          try { conn.send(packed); } catch (e) {}
+        }
+      }
+      return;
+    }
+    if (this._conn && this._conn.open) {
+      try { this._conn.send(packed); } catch (e) {}
     }
   }
+
+  /**
+   * Relay raw binary packet to all other connected peers except the sender (star topology).
+   * @param {ArrayBuffer} buffer
+   * @param {string} exceptPeerId
+   */
+  _relayBinExcept(buffer, exceptPeerId) {
+    if (!this.isHost || !this._connections || this._connections.size <= 1) return;
+    for (const [peerId, conn] of this._connections) {
+      if (peerId !== exceptPeerId && conn.open) {
+        try { conn.send(buffer); } catch (e) {}
+      }
+    }
+  }
+
+  sendTeamBattleFlagEvent(data)  { this._sendJSON(MSG.TB_FLAG_EVENT, data); }
+  sendTeamBattleIslandHit(data)  { this._sendJSON(MSG.TB_ISLAND_HIT, data); }
 
   /**
    * @deprecated  Use _sendBin() / _sendJSON() directly.
@@ -690,6 +791,26 @@ export class MultiplayerSystem {
       })),
     };
     this._sendJSON(MSG.SYNC_WORLD, snap);
+  }
+
+  /** Broadcast Team Battle state to peers. */
+  sendTeamBattleState(state) {
+    this._sendJSON(MSG.TB_STATE, state);
+  }
+
+  /** Send Team Battle action (start match, countdown, etc.) */
+  sendTeamBattleAction(action, config = null) {
+    this._sendJSON(MSG.TB_ACTION, { action, config });
+  }
+
+  /** Send Team Battle lobby update. */
+  sendTeamBattleLobby(lobbyData) {
+    this._sendJSON(MSG.TB_LOBBY, lobbyData);
+  }
+
+  /** Client → Host: Send fortress hit event */
+  sendTeamBattleIslandHit(hitData) {
+    this._sendJSON(MSG.TB_ISLAND_HIT, hitData);
   }
 
   // ── Per-frame update ───────────────────────────────────────────────────────

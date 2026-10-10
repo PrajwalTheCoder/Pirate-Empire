@@ -3,7 +3,7 @@
  * floating damage numbers, and toast notifications.
  */
 import EventEmitter from '../utils/EventEmitter.js';
-import { worldToScreen } from '../utils/MathUtils.js';
+import { worldToScreen, dist2D } from '../utils/MathUtils.js';
 import * as THREE from 'three';
 
 export class HUD {
@@ -31,8 +31,17 @@ export class HUD {
     /** @type {{ text: string, type: string, timer: number, el: HTMLElement }[]} */
     this._toasts = [];
 
-    // Partner overhead marker element (created lazily)
-    this._partnerMarkerEl = null;
+    // Combat Juice & Kill feedback
+    this._streakCount = 0;
+    this._lastKillTime = 0;
+    this._killBannerTimeout = null;
+    this._hitmarkerTimeout = null;
+    this._hitmarkerEl = document.getElementById('hitmarker');
+    this._killBannerEl = document.getElementById('kill-banner');
+    this._kbTitleEl = document.getElementById('kb-title');
+    this._kbSubEl = document.getElementById('kb-sub');
+    this._kbStreakEl = document.getElementById('kb-streak');
+    this._killFeedEl = document.getElementById('kill-feed');
 
     // Subscribe to events
     EventEmitter.on('economy:changed', (res) => this._onEconomyChanged(res));
@@ -52,9 +61,23 @@ export class HUD {
       const suffix = source ? ` (${source})` : '';
       this.toast(`🪙 ${label}${suffix}`, 'gold');
     });
+    EventEmitter.on('combat:hitmarker', ({ isCrit, isRake, isKill }) => {
+      this.showHitmarker(isCrit, isRake, isKill);
+    });
+    EventEmitter.on('ship:rammed', ({ rammer, victim, damage }) => {
+      const pos = victim?.group?.position || rammer?.group?.position;
+      if (pos) {
+        this.spawnDamageNumber(damage, pos.clone().setY(4), 'crit');
+      }
+      if (rammer === window.__game?.playerShip || victim === window.__game?.playerShip) {
+        this.toast(`💥 RAM IMPACT! -${damage} damage!`, 'danger');
+      }
+    });
     EventEmitter.on('ship:destroyed', ({ ship }) => {
-      if (ship.faction !== 'PLAYER')
-        this.toast(`💀 Enemy ship sunk!`, 'danger');
+      if (ship.faction !== 'PLAYER') {
+        const playerName = window.__game?.playerName || 'Captain';
+        this.showKillBanner(ship, playerName);
+      }
     });
     EventEmitter.on('island:under_attack', () =>
       this.toast('⚔️ Island under attack!', 'danger'));
@@ -299,6 +322,402 @@ export class HUD {
       arrow.style.top       = `${Math.round(ey)}px`;
       arrow.style.transform = `translate(-50%,-50%) rotate(${Math.round(angle * 180 / Math.PI)}deg)`;
     }
+  }
+
+  /** Display hitmarker over center of screen */
+  showHitmarker(isCrit = false, isRake = false, isKill = false) {
+    if (!this._hitmarkerEl) this._hitmarkerEl = document.getElementById('hitmarker');
+    if (!this._hitmarkerEl) return;
+    this._hitmarkerEl.classList.remove('hidden');
+    this._hitmarkerEl.classList.toggle('crit', isCrit || isRake);
+    this._hitmarkerEl.classList.toggle('kill', isKill);
+    clearTimeout(this._hitmarkerTimeout);
+    this._hitmarkerTimeout = setTimeout(() => {
+      this._hitmarkerEl?.classList.add('hidden');
+    }, 180);
+  }
+
+  /** Display central cinematic kill banner with streak tracker */
+  showKillBanner(ship, playerName = 'Captain') {
+    if (!this._killBannerEl) this._killBannerEl = document.getElementById('kill-banner');
+    if (!this._killBannerEl) return;
+
+    const now = performance.now();
+    if (now - this._lastKillTime < 18000) {
+      this._streakCount++;
+    } else {
+      this._streakCount = 1;
+    }
+    this._lastKillTime = now;
+
+    const factionName = (ship.faction || 'Enemy').replace('_', ' ');
+    if (this._kbTitleEl) this._kbTitleEl.textContent = `${factionName} SHIP SUNK!`;
+    if (this._kbSubEl) this._kbSubEl.textContent = `+Loot Claimed • +15% Hull Siphoned`;
+
+    if (this._kbStreakEl) {
+      if (this._streakCount >= 2) {
+        let streakText = '⚡ DOUBLE SINK!';
+        if (this._streakCount === 3) streakText = '🔥 TRIPLE BROADSIDE!';
+        else if (this._streakCount === 4) streakText = '☠️ QUADRA CANNON!';
+        else if (this._streakCount >= 5) streakText = `👑 ${this._streakCount}X UNSTOPPABLE REAPER!`;
+        this._kbStreakEl.textContent = streakText;
+        this._kbStreakEl.classList.remove('hidden');
+      } else {
+        this._kbStreakEl.classList.add('hidden');
+      }
+    }
+
+    this._killBannerEl.classList.remove('hidden');
+    clearTimeout(this._killBannerTimeout);
+    this._killBannerTimeout = setTimeout(() => {
+      this._killBannerEl?.classList.add('hidden');
+    }, 2400);
+
+    // Live Killfeed
+    this.addKillFeedEntry(playerName, `${factionName} Ship`);
+  }
+
+  /** Add an entry to the top-right kill feed */
+  addKillFeedEntry(killer, victim) {
+    if (!this._killFeedEl) this._killFeedEl = document.getElementById('kill-feed');
+    if (!this._killFeedEl) return;
+    const item = document.createElement('div');
+    item.className = 'kf-item';
+    item.innerHTML = `<span class="kf-killer">${killer}</span> <span class="kf-icon">💣</span> <span class="kf-victim">${victim}</span>`;
+    this._killFeedEl.appendChild(item);
+    setTimeout(() => {
+      item.style.opacity = '0';
+      item.style.transition = 'opacity 0.4s ease';
+      setTimeout(() => item.remove(), 400);
+    }, 4500);
+  }
+
+  // ── Overhead Health Bars for Damaged / Combat Ships ─────────────────────────
+
+  /**
+   * Render overhead health bars above ships that have taken damage or are in battle.
+   * @param {import('../systems/ShipSystem.js').Ship[]} ships
+   * @param {THREE.Vector3|null} playerPos
+   * @param {boolean} isTeamBattle
+   */
+  updateShipHealthBars(ships, playerPos, isTeamBattle = false) {
+    if (!this._shipBarsContainer) {
+      const container = document.createElement('div');
+      container.id = 'ship-overhead-bars';
+      document.body.appendChild(container);
+      this._shipBarsContainer = container;
+      this._shipBars = new Map();
+    }
+
+    const now = performance.now();
+    const activeShipIds = new Set();
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+
+    for (const ship of ships) {
+      if (!ship || !ship.isAlive || !ship.group) continue;
+      // Skip the local player's own ship — they have the main bottom-right HUD hull bar
+      if (ship === window.__game?.playerShip) continue;
+      // Skip co-op partner if they already have the dedicated partner marker
+      if (!isTeamBattle && ship._isPartnerGhost) continue;
+
+      const recentlyHit = ship._lastHitTime && (now - ship._lastHitTime < 8000);
+      const isDamaged = ship.health < ship.maxHealth;
+
+      // Show bar if damaged, recently hit, or in Team Battle combat range (< 120m)
+      let shouldShow = isDamaged || recentlyHit;
+      if (isTeamBattle && playerPos) {
+        const dx = ship.group.position.x - playerPos.x;
+        const dz = ship.group.position.z - playerPos.z;
+        if (dx * dx + dz * dz < 12100) shouldShow = true;
+      }
+      if (!shouldShow) continue;
+
+      activeShipIds.add(ship.id);
+
+      let barData = this._shipBars.get(ship.id);
+      if (!barData) {
+        const el = document.createElement('div');
+        el.className = 'ship-overhead-marker';
+        el.innerHTML = `
+          <div class="som-name"></div>
+          <div class="som-hpbar">
+            <div class="som-hpfill"></div>
+          </div>
+          <div class="som-hptext"></div>
+        `;
+        this._shipBarsContainer.appendChild(el);
+        barData = {
+          el,
+          nameEl: el.querySelector('.som-name'),
+          fillEl: el.querySelector('.som-hpfill'),
+          textEl: el.querySelector('.som-hptext'),
+        };
+        this._shipBars.set(ship.id, barData);
+      }
+
+      // World to screen projection
+      const worldPos = ship.group.position.clone();
+      worldPos.y += (ship.shipClass?.includes('LARGE') ? 13 : 9);
+      const screen = worldToScreen(worldPos, this._camera, this._canvas);
+
+      const onScreen = screen.x > 30 && screen.x < W - 30 &&
+                       screen.y > 30 && screen.y < H - 30;
+
+      if (!onScreen) {
+        barData.el.classList.add('hidden');
+        continue;
+      }
+
+      barData.el.classList.remove('hidden');
+      barData.el.style.left = `${Math.round(screen.x)}px`;
+      barData.el.style.top  = `${Math.round(screen.y)}px`;
+
+      // HP calculation
+      const hp = Math.max(0, ship.health);
+      const mhp = Math.max(1, ship.maxHealth || 100);
+      const pct = Math.min(1, Math.max(0, hp / mhp));
+
+      barData.fillEl.style.width = `${(pct * 100).toFixed(0)}%`;
+
+      // Team battle styling or faction styling
+      if (ship.team) {
+        const localTeam = window.__game?.playerShip?.team || 'CRIMSON';
+        const isAlly = ship.team === localTeam;
+        const isCrimson = ship.team === 'CRIMSON';
+        barData.el.className = `ship-overhead-marker ${isCrimson ? 'team-crimson' : 'team-blacktide'}`;
+
+        const badge = isAlly
+          ? `<span class="som-badge-tag ally">ALLY</span>`
+          : `<span class="som-badge-tag enemy">ENEMY</span>`;
+        const teamName = isCrimson ? '🔴 Crimson Corsair' : '🔵 Black Tide Raider';
+        barData.nameEl.className = `som-name ${isAlly ? 'ally' : 'enemy'}`;
+        barData.nameEl.innerHTML = `${badge}${teamName}`;
+        barData.fillEl.style.background = isAlly
+          ? (pct > 0.5 ? '#36d399' : pct > 0.25 ? '#ffb300' : '#ff3d00')
+          : (isCrimson ? '#ff3b3b' : '#3895e6');
+      } else {
+        const fac = (ship.faction || 'ENEMY').replace('_', ' ');
+        barData.nameEl.textContent = `☠️ ${fac} Ship`;
+        barData.fillEl.style.background = pct > 0.5 ? '#00e676' : pct > 0.25 ? '#ffb300' : '#ff3d00';
+      }
+
+      barData.textEl.textContent = `${Math.ceil(hp)} / ${mhp}`;
+    }
+
+    // Hide and prune bars for inactive/sunk ships
+    for (const [id, barData] of this._shipBars) {
+      if (!activeShipIds.has(id)) {
+        barData.el.classList.add('hidden');
+      }
+    }
+  }
+
+  // ── Team Battle In-Game HUD ──────────────────────────────────────────────────
+
+  /**
+   * Update the pirate-themed Team Battle top HUD elements.
+   */
+  updateTeamBattleHUD(state) {
+    let hudEl = document.getElementById('teambattle-hud');
+    if (!hudEl) {
+      hudEl = document.createElement('div');
+      hudEl.id = 'teambattle-hud';
+      hudEl.className = 'tb-hud';
+      hudEl.innerHTML = `
+        <div class="tb-top-bar">
+          <!-- Crimson Corsairs Island Fortress -->
+          <div class="tb-fort-card crimson">
+            <div class="tb-fort-header">
+              <span class="tb-fort-flag">🔴</span>
+              <span class="tb-fort-name">CRIMSON FORTRESS</span>
+            </div>
+            <div class="tb-fort-track">
+              <div class="tb-fort-fill" id="tb-fill-a"></div>
+            </div>
+            <div class="tb-fort-hp" id="tb-hp-a">1000 / 1000</div>
+          </div>
+
+          <!-- Central Flag & Match Info -->
+          <div class="tb-center-card">
+            <div class="tb-timer" id="tb-timer">08:00</div>
+            <div class="tb-flag-banner" id="tb-flag-status">
+              <span class="tb-flag-icon">🚩</span>
+              <span class="tb-flag-label" id="tb-flag-label">FLAG: NEUTRAL</span>
+            </div>
+            <div class="tb-flag-track">
+              <div class="tb-flag-fill" id="tb-flag-fill" style="width: 50%;"></div>
+            </div>
+            <div class="tb-scores">
+              <span class="tb-score-a" id="tb-score-a">CC: 0</span>
+              <span class="tb-score-sep">⚔️</span>
+              <span class="tb-score-b" id="tb-score-b">BTR: 0</span>
+            </div>
+          </div>
+
+          <!-- Black Tide Raiders Island Fortress -->
+          <div class="tb-fort-card blacktide">
+            <div class="tb-fort-header">
+              <span class="tb-fort-flag">🔵</span>
+              <span class="tb-fort-name">BLACK TIDE FORTRESS</span>
+            </div>
+            <div class="tb-fort-track">
+              <div class="tb-fort-fill" id="tb-fill-b"></div>
+            </div>
+            <div class="tb-fort-hp" id="tb-hp-b">1000 / 1000</div>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(hudEl);
+    }
+
+    hudEl.classList.remove('hidden');
+
+    // Update Fortress A (Crimson)
+    const pctA = Math.max(0, state.islandHpA / state.maxIslandHp);
+    const fillA = document.getElementById('tb-fill-a');
+    const hpA = document.getElementById('tb-hp-a');
+    const cardA = hudEl.querySelector('.tb-fort-card.crimson');
+    if (fillA) fillA.style.width = `${(pctA * 100).toFixed(0)}%`;
+    if (hpA) hpA.textContent = `${Math.ceil(state.islandHpA)} / ${state.maxIslandHp}`;
+    if (cardA) cardA.classList.toggle('critical', state.islandHpA <= 300);
+
+    // Update Fortress B (Black Tide)
+    const pctB = Math.max(0, state.islandHpB / state.maxIslandHp);
+    const fillB = document.getElementById('tb-fill-b');
+    const hpB = document.getElementById('tb-hp-b');
+    const cardB = hudEl.querySelector('.tb-fort-card.blacktide');
+    if (fillB) fillB.style.width = `${(pctB * 100).toFixed(0)}%`;
+    if (hpB) hpB.textContent = `${Math.ceil(state.islandHpB)} / ${state.maxIslandHp}`;
+    if (cardB) cardB.classList.toggle('critical', state.islandHpB <= 300);
+
+    // Update Timer
+    const mins = Math.floor(state.timeRemaining / 60);
+    const secs = Math.floor(state.timeRemaining % 60);
+    const timerEl = document.getElementById('tb-timer');
+    if (timerEl) timerEl.textContent = `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+
+    // Update Scores
+    const scA = document.getElementById('tb-score-a');
+    const scB = document.getElementById('tb-score-b');
+    if (scA) scA.textContent = `CC: ${state.scoreA}`;
+    if (scB) scB.textContent = `BTR: ${state.scoreB}`;
+
+    // Update Flag status & progress
+    const flagLabel = document.getElementById('tb-flag-label');
+    const flagFill = document.getElementById('tb-flag-fill');
+
+    if (flagLabel) {
+      if (state.isContested) {
+        flagLabel.textContent = '⚔️ CONTESTED!';
+        flagLabel.style.color = '#ffaa00';
+      } else if (state.flagOwner === 'CRIMSON') {
+        flagLabel.textContent = '🔴 CRIMSON HELD';
+        flagLabel.style.color = '#ff6b6b';
+      } else if (state.flagOwner === 'BLACK_TIDE') {
+        flagLabel.textContent = '🔵 BLACK TIDE HELD';
+        flagLabel.style.color = '#5cb8ff';
+      } else {
+        flagLabel.textContent = '🚩 NEUTRAL FLAG';
+        flagLabel.style.color = '#d8c49a';
+      }
+    }
+
+    if (flagFill) {
+      // Map progress [-100..+100] to [0%..100%]
+      // 0% = full Black Tide, 50% = Neutral, 100% = full Crimson
+      const normalized = (state.flagProgress + 100) / 2;
+      flagFill.style.width = `${normalized.toFixed(0)}%`;
+      if (state.flagProgress > 5) flagFill.style.background = '#8e3434';
+      else if (state.flagProgress < -5) flagFill.style.background = '#142b3a';
+      else flagFill.style.background = '#d8c49a';
+    }
+  }
+
+  hideTeamBattleHUD() {
+    const hudEl = document.getElementById('teambattle-hud');
+    if (hudEl) hudEl.classList.add('hidden');
+    const announceEl = document.getElementById('tb-announcement');
+    if (announceEl) announceEl.remove();
+  }
+
+  /**
+   * Pirate-themed central battle announcement banner.
+   */
+  showTeamBattleAnnouncement(text, type = 'gold') {
+    let el = document.getElementById('tb-announcement');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'tb-announcement';
+      el.className = 'tb-announcement';
+      document.body.appendChild(el);
+    }
+    el.className = `tb-announcement ${type}`;
+    el.textContent = text;
+    el.classList.remove('hidden');
+
+    clearTimeout(this._announcementTimeout);
+    this._announcementTimeout = setTimeout(() => {
+      el?.classList.add('hidden');
+    }, 3200);
+  }
+
+  /**
+   * Victory Modal for Team Battle.
+   */
+  showTeamBattleVictory(result) {
+    let modal = document.getElementById('tb-victory-modal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'tb-victory-modal';
+      modal.className = 'tb-victory-modal';
+      document.body.appendChild(modal);
+    }
+
+    const isCrimson = result.winningTeam === 'CRIMSON';
+    const isBlackTide = result.winningTeam === 'BLACK_TIDE';
+    const title = isCrimson ? '🔴 CRIMSON CORSAIRS VICTORY!'
+      : isBlackTide ? '🔵 BLACK TIDE RAIDERS VICTORY!' : '⚖️ HONOURABLE DRAW!';
+
+    modal.innerHTML = `
+      <div class="tb-victory-card">
+        <div class="tb-vic-skull">☠</div>
+        <h2 class="tb-vic-title">${title}</h2>
+        <p class="tb-vic-reason">${result.reason}</p>
+
+        <div class="tb-vic-stats">
+          <div class="tb-vic-stat-col crimson">
+            <span class="tb-vic-team-name">Crimson Corsairs</span>
+            <div class="tb-vic-stat-val">Score: ${result.scoreA}</div>
+            <div class="tb-vic-stat-val">Fortress HP: ${Math.ceil(result.islandHpA)} / 1000</div>
+          </div>
+          <div class="tb-vic-vs">VS</div>
+          <div class="tb-vic-stat-col blacktide">
+            <span class="tb-vic-team-name">Black Tide Raiders</span>
+            <div class="tb-vic-stat-val">Score: ${result.scoreB}</div>
+            <div class="tb-vic-stat-val">Fortress HP: ${Math.ceil(result.islandHpB)} / 1000</div>
+          </div>
+        </div>
+
+        <div class="tb-vic-actions">
+          <button class="mm-btn mm-btn-play" id="tb-btn-rematch" data-testid="tb-rematch-btn">⚔️ &nbsp;Rematch</button>
+          <button class="mm-btn" id="tb-btn-menu">⚓ &nbsp;Return to Menu</button>
+        </div>
+      </div>
+    `;
+
+    modal.classList.remove('hidden');
+
+    const rematchBtn = document.getElementById('tb-btn-rematch') || document.getElementById('tb-rematch-btn');
+    rematchBtn?.addEventListener('click', () => {
+      modal.classList.add('hidden');
+      window.__game?.startTeamBattleRematch?.();
+    });
+
+    document.getElementById('tb-btn-menu')?.addEventListener('click', () => {
+      modal.classList.add('hidden');
+      window.__game?.returnToMainMenu?.();
+    });
   }
 
   update(_delta) { /* event-driven */ }

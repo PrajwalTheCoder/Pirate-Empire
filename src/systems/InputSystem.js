@@ -23,6 +23,10 @@ export class InputSystem {
     };
 
     this._onMouseDown = (e) => {
+      // Don't register mouse actions if clicked directly on UI buttons or modal dialogs
+      if (e.target && e.target.closest && e.target.closest('button, input, select, textarea, .modal, .mm-panel, .panel, #hud, #minimap-container, #daily-rewards-modal, #story-dialogue-modal, #mobile-controls')) {
+        return;
+      }
       const key = `Mouse${e.button}`;
       if (!this._keys.has(key)) {
         this._justPressed.add(key);
@@ -32,8 +36,10 @@ export class InputSystem {
 
     this._onMouseUp = (e) => {
       const key = `Mouse${e.button}`;
-      this._keys.delete(key);
-      this._justReleased.add(key);
+      if (this._keys.has(key)) {
+        this._keys.delete(key);
+        this._justReleased.add(key);
+      }
     };
 
     window.addEventListener('keydown', this._onKeyDown);

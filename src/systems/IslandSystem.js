@@ -115,7 +115,7 @@ export class IslandSystem {
       // Rotate cannon barrel to face the target (local Y rotation)
       const tx = nearestShip.group.position.x - cannonWorldPos.x;
       const tz = nearestShip.group.position.z - cannonWorldPos.z;
-      island.cannonMesh.rotation.y = Math.atan2(tx, tz);
+      activeCannon.rotation.y = Math.atan2(tx, tz);
 
       // Fire on cooldown
       if (island.cannonCooldown <= 0) {

@@ -40,6 +40,7 @@ const MODEL_MANIFEST = [
   'boat-row-small',
   // Structures
   'tower-complete-small',
+  'tower-complete-large',
   'tower-watch',
   'tower-base',
   'tower-roof',
@@ -47,7 +48,13 @@ const MODEL_MANIFEST = [
   'structure-platform',
   'structure-platform-dock',
   'structure-roof',
+  'castle-wall',
+  'castle-gate',
+  'castle-window',
   // Flags
+  'flag',
+  'flag-pennant',
+  'flag-high',
   'flag-pirate',
   'flag-pirate-high',
 ];
