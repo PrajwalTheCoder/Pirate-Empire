@@ -265,6 +265,16 @@ export class SkySystem {
 
   /** 0 = full day, 1 = midnight. */
   get nightFraction() { return this._nightFraction; }
+
+  /**
+   * Authoritatively synchronize Day/Night cycle phase across multiplayer clients.
+   * @param {number} val — 0 to 1 cycle phase
+   */
+  setDayPhase(val) {
+    if (typeof val === 'number' && !isNaN(val)) {
+      this._dayPhase = val;
+    }
+  }
 }
 
 export default SkySystem;

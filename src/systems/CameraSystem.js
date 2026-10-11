@@ -41,6 +41,15 @@ export class CameraSystem {
       this.shake(intensity, duration);
     });
 
+    EventEmitter.on('ship:hit', ({ ship }) => {
+      if (ship && (ship.faction === 'PLAYER' || ship === window.__game?.playerShip)) {
+        this.shake(
+          GameConfig.PLAYER_HIT_SHAKE_INTENSITY ?? 0.70,
+          GameConfig.PLAYER_HIT_SHAKE_DURATION ?? 0.35,
+        );
+      }
+    });
+
     // Initialise camera to a sensible default
     camera.position.set(0, GameConfig.CAMERA_OFFSET_Y, GameConfig.CAMERA_OFFSET_Z);
     camera.lookAt(0, 1.5, 0);
@@ -122,14 +131,15 @@ export class CameraSystem {
     this._camera.position.y = lerp(this._camera.position.y, this._desiredPos.y, lagFactor * 1.5);
     this._camera.position.z = lerp(this._camera.position.z, this._desiredPos.z, lagFactor);
 
-    // Apply procedural trauma screen shake
+    // Apply procedural trauma screen shake (positional + rotational recoil)
     if (this._shakeDuration > 0) {
       this._shakeDuration -= delta;
       const progress = Math.max(0, this._shakeDuration / (this._shakeMax || 0.25));
       const mag = this._shakeIntensity * progress;
-      this._camera.position.x += (Math.random() - 0.5) * mag * 2.2;
-      this._camera.position.y += (Math.random() - 0.5) * mag * 1.6;
-      this._camera.position.z += (Math.random() - 0.5) * mag * 2.2;
+      this._camera.position.x += (Math.random() - 0.5) * mag * 2.4;
+      this._camera.position.y += (Math.random() - 0.5) * mag * 1.8;
+      this._camera.position.z += (Math.random() - 0.5) * mag * 2.4;
+      this._camera.rotation.z += (Math.random() - 0.5) * mag * 0.045;
     }
 
     // Look at a point slightly in front of and above the waterline

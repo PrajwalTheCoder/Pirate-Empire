@@ -15,39 +15,40 @@
 import * as THREE from 'three';
 
 // ── Systems ─────────────────────────────────────────────────────────────────
-import AssetLoader    from './systems/AssetLoader.js';
-import InputSystem    from './systems/InputSystem.js';
-import ShipSystem     from './systems/ShipSystem.js';
-import CombatSystem   from './systems/CombatSystem.js';
-import EconomySystem  from './systems/EconomySystem.js';
-import IslandSystem   from './systems/IslandSystem.js';
-import BuildSystem    from './systems/BuildSystem.js';
-import MissionSystem  from './systems/MissionSystem.js';
-import AISystem       from './systems/AISystem.js';
-import CameraSystem   from './systems/CameraSystem.js';
-import WakeSystem     from './systems/WakeSystem.js';
-import BirdSystem     from './systems/BirdSystem.js';
-import LootSystem     from './systems/LootSystem.js';
-import PerkSystem     from './systems/PerkSystem.js';
+import AssetLoader from './systems/AssetLoader.js';
+import InputSystem from './systems/InputSystem.js';
+import ShipSystem from './systems/ShipSystem.js';
+import CombatSystem from './systems/CombatSystem.js';
+import EconomySystem from './systems/EconomySystem.js';
+import IslandSystem from './systems/IslandSystem.js';
+import BuildSystem from './systems/BuildSystem.js';
+import MissionSystem from './systems/MissionSystem.js';
+import AISystem from './systems/AISystem.js';
+import CameraSystem from './systems/CameraSystem.js';
+import WakeSystem from './systems/WakeSystem.js';
+import BirdSystem from './systems/BirdSystem.js';
+import LootSystem from './systems/LootSystem.js';
+import PerkSystem from './systems/PerkSystem.js';
 import MultiplayerSystem, { QUICK_CHAT } from './systems/MultiplayerSystem.js';
-import WorldEventSystem  from './systems/WorldEventSystem.js';
-import StorySystem       from './systems/StorySystem.js';
-import MobileControls    from './systems/MobileControls.js';
-import TeamBattleSystem  from './systems/TeamBattleSystem.js';
+import WorldEventSystem from './systems/WorldEventSystem.js';
+import StorySystem from './systems/StorySystem.js';
+import MobileControls from './systems/MobileControls.js';
+import TeamBattleSystem from './systems/TeamBattleSystem.js';
 import TeamBattleLobbyUI from './ui/TeamBattleLobbyUI.js';
+import MatchmakingSystem from './systems/MatchmakingSystem.js';
 
 // ── World ────────────────────────────────────────────────────────────────────
-import Ocean           from './world/Ocean.js';
-import SkySystem       from './world/SkySystem.js';
+import Ocean from './world/Ocean.js';
+import SkySystem from './world/SkySystem.js';
 import IslandGenerator from './world/IslandGenerator.js';
-import HazardsSystem   from './world/HazardsSystem.js';
+import HazardsSystem from './world/HazardsSystem.js';
 
 // ── UI ───────────────────────────────────────────────────────────────────────
-import HUD            from './ui/HUD.js';
-import UIPanel        from './ui/UIPanel.js';
-import MissionUI      from './ui/MissionUI.js';
+import HUD from './ui/HUD.js';
+import UIPanel from './ui/UIPanel.js';
+import MissionUI from './ui/MissionUI.js';
 import DialogueSystem from './ui/DialogueSystem.js';
-import Minimap    from './ui/Minimap.js';
+import Minimap from './ui/Minimap.js';
 import TutorialSystem from './ui/TutorialSystem.js';
 
 // ── Config ───────────────────────────────────────────────────────────────────
@@ -62,62 +63,63 @@ class Game {
   constructor() {
     // Populated during init()
     this.renderer = null;
-    this.scene    = null;
-    this.camera   = null;
-    this.clock    = null;
+    this.scene = null;
+    this.camera = null;
+    this.clock = null;
 
-    this.ocean        = null;
-    this.sky          = null;
-    this.playerShip   = null;
+    this.ocean = null;
+    this.sky = null;
+    this.playerShip = null;
 
-    this._systems     = [];  // ordered list of systems with update()
-    this._running     = false;
-    this._isGameOver  = false;
-    this._paused      = false;
-    this._killCount   = 0;
-    this._allyShips   = [];
+    this._systems = [];  // ordered list of systems with update()
+    this._running = false;
+    this._isGameOver = false;
+    this._paused = false;
+    this._killCount = 0;
+    this._allyShips = [];
     this._healingAtIsland = false;
     this._healDisplayTimer = 0;
-    this._bossAnnounced   = false;
-    this._scoreSubmitted  = false;
-    this._bossDefeated    = false;
-    this._treasuresFound  = 0;
+    this._bossAnnounced = false;
+    this._scoreSubmitted = false;
+    this._bossDefeated = false;
+    this._treasuresFound = 0;
 
-    this._gameTimer        = 0;
-    this._treasureMarks    = [];
-    this._stormTimer       = 100 + Math.random() * 80;
-    this._stormActive      = false;
-    this._stormDuration    = 0;
+    this._gameTimer = 0;
+    this._treasureMarks = [];
+    this._stormTimer = 100 + Math.random() * 80;
+    this._stormActive = false;
+    this._stormDuration = 0;
     this._boardingCooldown = 0;
 
-    // Multiplayer
-    this.isCoop        = false;
-    this.mp            = null;   // MultiplayerSystem
-    this._partnerShip  = null;  // Ghost ship object for partner
+    // Multiplayer & Matchmaking
+    this.isCoop = false;
+    this.mp = null;   // MultiplayerSystem
+    this.matchmaking = new MatchmakingSystem(this);
+    this._partnerShip = null;  // Ghost ship object for partner
     this._partnerRescueTimer = 0;
     this._worldLogQueue = [];
 
     // World events
-    this.worldEvents   = null;  // WorldEventSystem
+    this.worldEvents = null;  // WorldEventSystem
 
     // Team Battle
-    this.isTeamBattle      = false;
-    this.teamBattle        = null;  // TeamBattleSystem
-    this.teamBattleLobby   = null;  // TeamBattleLobbyUI
-    this.teamBattleConfig  = null;
+    this.isTeamBattle = false;
+    this.teamBattle = null;  // TeamBattleSystem
+    this.teamBattleLobby = null;  // TeamBattleLobbyUI
+    this.teamBattleConfig = null;
 
     // Wind Dynamics
-    this.windAngle        = Math.random() * Math.PI * 2;
-    this.windStrength     = 0.8;
-    this.windTimer        = 180;
+    this.windAngle = Math.random() * Math.PI * 2;
+    this.windStrength = 0.8;
+    this.windTimer = 180;
     this._targetWindAngle = this.windAngle;
 
     /** @type {AudioSystem|null} */
-    this.audio        = null;
+    this.audio = null;
 
     // Player Name & Unique ID
     this.playerName = localStorage.getItem('pe_player_name') || '';
-    this.playerId   = localStorage.getItem('pe_player_id') || null;
+    this.playerId = localStorage.getItem('pe_player_id') || null;
 
     if (!this.playerName) {
       this.playerName = this._generateRandomPirateName();
@@ -147,8 +149,8 @@ class Game {
 
     // ── 4. Setup player name UI ──────────────────────────────────────────────
     const nameInput = document.getElementById('mm-player-name');
-    const saveBtn   = document.getElementById('mm-save-name');
-    const statusEl  = document.getElementById('mm-name-status');
+    const saveBtn = document.getElementById('mm-save-name');
+    const statusEl = document.getElementById('mm-name-status');
 
     const updateStatus = (statusClass, text) => {
       if (!statusEl) return;
@@ -260,6 +262,41 @@ class Game {
 
   /** Called by the Play button — kicks off all game systems and the loop. */
   _startGame() {
+    if (this._systemsInited) {
+      if (this.isTeamBattle) {
+        if (!this.teamBattle) {
+          this.teamBattle = new TeamBattleSystem(this);
+        }
+        this.combat.setTeamBattle(this.teamBattle);
+        this.teamBattle.initBattlefield();
+        this.teamBattle.setupParticipants(
+          this.playerName,
+          this.teamBattleConfig?.mode ?? '2v2',
+          this.teamBattleConfig?.botFill ?? true,
+        );
+        this.teamBattle.spawnParticipantShips();
+        this.teamBattle.startCountdown();
+        this.hud?.updateTeamBattleHUD(this.teamBattle.getState());
+      } else {
+        if (this._islands) {
+          for (const isl of this._islands) {
+            if (isl.group) isl.group.visible = true;
+          }
+        }
+        this.ships?.setIslands(this._islands);
+        if (this.playerShip) {
+          this.playerShip.setPosition(0, 1.0, 0);
+          this.playerShip.health = this.playerShip.maxHealth;
+          this.playerShip.state = 'SAILING';
+          this.playerShip._sinkTimer = 0;
+          this.ships?.registerShip(this.playerShip);
+        }
+      }
+      this.start();
+      return;
+    }
+    this._systemsInited = true;
+
     // ── 4. Game systems ─────────────────────────────────────────────────────
     this._initSystems();
 
@@ -268,11 +305,11 @@ class Game {
     this.audio.setPlayerShip(this.playerShip);
     // Apply whatever the settings sliders are currently set to
     const masterSlider = document.getElementById('s-master');
-    const sfxSlider    = document.getElementById('s-sfx');
-    const musicSlider  = document.getElementById('s-music');
-    const masterVol    = (masterSlider ? parseInt(masterSlider.value, 10) : 80) / 100;
-    const sfxVol       = (sfxSlider    ? parseInt(sfxSlider.value,    10) : 80) / 100;
-    const musicVol     = (musicSlider  ? parseInt(musicSlider.value,  10) : 60) / 100;
+    const sfxSlider = document.getElementById('s-sfx');
+    const musicSlider = document.getElementById('s-music');
+    const masterVol = (masterSlider ? parseInt(masterSlider.value, 10) : 80) / 100;
+    const sfxVol = (sfxSlider ? parseInt(sfxSlider.value, 10) : 80) / 100;
+    const musicVol = (musicSlider ? parseInt(musicSlider.value, 10) : 60) / 100;
     this.audio.setVolumes(masterVol, sfxVol, musicVol);
     this.audio.start();
 
@@ -285,7 +322,7 @@ class Game {
         if (bounty.wood) this.economy.add('wood', bounty.wood);
         if (bounty.crew) this.economy.add('crew', bounty.crew);
         localStorage.removeItem('pe_pending_daily_bounty');
-      } catch {}
+      } catch { }
     }
 
     // ── 5. UI ────────────────────────────────────────────────────────────────
@@ -310,8 +347,8 @@ class Game {
   // ── Renderer ───────────────────────────────────────────────────────────────
 
   _initRenderer() {
-    this.scene  = new THREE.Scene();
-    this.clock  = new THREE.Clock();
+    this.scene = new THREE.Scene();
+    this.clock = new THREE.Clock();
 
     this.camera = new THREE.PerspectiveCamera(
       60,
@@ -327,8 +364,8 @@ class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type    = THREE.PCFSoftShadowMap;
-    this.renderer.toneMapping       = THREE.ACESFilmicToneMapping;
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.1;
 
     document.getElementById('canvas-container').appendChild(this.renderer.domElement);
@@ -344,7 +381,7 @@ class Game {
   // ── Asset Loading ──────────────────────────────────────────────────────────
 
   async _loadAssets() {
-    const bar       = document.getElementById('loading-bar-fill');
+    const bar = document.getElementById('loading-bar-fill');
     const loadingTxt = document.getElementById('loading-text');
 
     const messages = [
@@ -384,7 +421,7 @@ class Game {
 
     // Islands
     const generator = new IslandGenerator(this.scene);
-    this._islands   = generator.generate();
+    this._islands = generator.generate();
 
     // World hazards: shipwrecks, abandoned boats, dangerous rocks
     this.hazards = new HazardsSystem(this.scene, this._islands);
@@ -490,16 +527,16 @@ class Game {
     });
 
     EventEmitter.on('world:reputation_changed', ({ rep }) => {
-      const hudEl   = document.getElementById('reputation-hud');
+      const hudEl = document.getElementById('reputation-hud');
       const titleEl = document.getElementById('rep-title');
-      const fillEl  = document.getElementById('rep-bar-fill');
+      const fillEl = document.getElementById('rep-bar-fill');
       const scoreEl = document.getElementById('rep-score');
       if (!hudEl) return;
       hudEl.classList.remove('hidden');
       const title = this.worldEvents.getReputationTitle();
       if (titleEl) titleEl.textContent = `${this.playerName} (${title})`;
       if (scoreEl) scoreEl.textContent = rep;
-      if (fillEl)  fillEl.style.width  = `${Math.min(100, (rep / 6000) * 100).toFixed(1)}%`;
+      if (fillEl) fillEl.style.width = `${Math.min(100, (rep / 6000) * 100).toFixed(1)}%`;
       if (rep >= 3000) {
         hudEl.classList.add('legendary');
       }
@@ -532,10 +569,10 @@ class Game {
         const initialTitle = this.worldEvents?.getReputationTitle() ?? 'Unknown Sailor';
         const repTitleEl = document.getElementById('rep-title');
         const repScoreEl = document.getElementById('rep-score');
-        const repFillEl  = document.getElementById('rep-bar-fill');
+        const repFillEl = document.getElementById('rep-bar-fill');
         if (repTitleEl) repTitleEl.textContent = `${this.playerName} (${initialTitle})`;
         if (repScoreEl) repScoreEl.textContent = initialRep;
-        if (repFillEl)  repFillEl.style.width  = `${Math.min(100, (initialRep / 6000) * 100).toFixed(1)}%`;
+        if (repFillEl) repFillEl.style.width = `${Math.min(100, (initialRep / 6000) * 100).toFixed(1)}%`;
       }
     }
     document.getElementById('world-log-ticker')?.classList.remove('hidden');
@@ -545,24 +582,24 @@ class Game {
 
     // Story: reputation changes → update story-rep-hud  (fix: use story._killCount)
     EventEmitter.on('story:reputation_changed', ({ tier }) => {
-      const hudEl   = document.getElementById('story-rep-hud');
-      const tierEl  = document.getElementById('story-rep-tier');
+      const hudEl = document.getElementById('story-rep-hud');
+      const tierEl = document.getElementById('story-rep-tier');
       const killsEl = document.getElementById('story-rep-kills');
       if (!hudEl) return;
       if (this._storyMode) hudEl.classList.remove('hidden');
-      if (tierEl)  tierEl.textContent = tier.title;
-      if (tierEl)  tierEl.style.color = tier.color;
+      if (tierEl) tierEl.textContent = tier.title;
+      if (tierEl) tierEl.style.color = tier.color;
       if (killsEl) killsEl.textContent = `⚔ ${this.story?._killCount ?? 0} ships sunk`;
     });
 
     // Story: objective update → mission bar
     EventEmitter.on('story:objective_update', ({ objective, progress, killCount, captureCount, currentAct }) => {
       if (!this._storyMode) return;
-      const bar       = document.getElementById('story-objective-bar');
-      const badgeEl   = document.getElementById('obj-act-badge');
-      const textEl    = document.getElementById('obj-text');
-      const fillEl    = document.getElementById('obj-progress-fill');
-      const labelEl   = document.getElementById('obj-progress-label');
+      const bar = document.getElementById('story-objective-bar');
+      const badgeEl = document.getElementById('obj-act-badge');
+      const textEl = document.getElementById('obj-text');
+      const fillEl = document.getElementById('obj-progress-fill');
+      const labelEl = document.getElementById('obj-progress-label');
 
       if (!bar) return;
       bar.classList.remove('hidden');
@@ -652,10 +689,10 @@ class Game {
     if (!ship) return;
     switch (upgrade.stat) {
       case 'speed':
-        ship.speed       *= (1 + upgrade.bonus); break;
+        ship.speed *= (1 + upgrade.bonus); break;
       case 'maxHealth':
-        ship.maxHealth   = Math.round(ship.maxHealth * (1 + upgrade.bonus));
-        ship.health      = Math.min(ship.health, ship.maxHealth);
+        ship.maxHealth = Math.round(ship.maxHealth * (1 + upgrade.bonus));
+        ship.health = Math.min(ship.health, ship.maxHealth);
         break;
       case 'cannonPower':
         ship.cannonPower *= (1 + upgrade.bonus); break;
@@ -671,8 +708,8 @@ class Game {
   _upgradePlayerShip(newClass) {
     const old = this.playerShip;
     if (!old) return;
-    const pos    = old.group.position.clone();
-    const rotY   = old.group.rotation.y;
+    const pos = old.group.position.clone();
+    const rotY = old.group.rotation.y;
     const hpFrac = old.health / old.maxHealth;
 
     // Remove old ship from scene and ship map
@@ -708,7 +745,7 @@ class Game {
     this._menuRafRunning = false;
     menu?.classList.add('hidden');
     document.getElementById('mm-version')?.remove();
-    this.isCoop     = false;
+    this.isCoop = false;
     this._storyMode = true;
     this._startGame();
     setTimeout(() => {
@@ -722,7 +759,7 @@ class Game {
 
   /** Shows the resume campaign modal with saved progress data. */
   _showResumeModal(saved, menu) {
-    const modal      = document.getElementById('story-resume-modal');
+    const modal = document.getElementById('story-resume-modal');
     if (!modal) {
       // Fallback — just launch directly
       this._launchStoryMode(menu, false);
@@ -737,10 +774,10 @@ class Game {
       final: 'FINAL ACT — THE HOLLOW DEEP',
     };
     const repTierTitles = [
-      { threshold: 0,    title: 'Unknown Sailor' },
-      { threshold: 100,  title: 'Troublemaker' },
-      { threshold: 300,  title: 'Infamous Raider' },
-      { threshold: 600,  title: 'Feared Captain' },
+      { threshold: 0, title: 'Unknown Sailor' },
+      { threshold: 100, title: 'Troublemaker' },
+      { threshold: 300, title: 'Infamous Raider' },
+      { threshold: 600, title: 'Feared Captain' },
       { threshold: 1000, title: 'Legendary Privateer' },
       { threshold: 2000, title: 'Dread of the Seas' },
       { threshold: 4000, title: '☠️ THE PIRATE LEGEND' },
@@ -750,10 +787,10 @@ class Game {
     if (actLabelEl) actLabelEl.textContent = actTitles[saved.act] || actTitles.act1;
 
     const killsEl = document.getElementById('resume-kills');
-    const capEl   = document.getElementById('resume-captures');
-    const repEl   = document.getElementById('resume-rep');
+    const capEl = document.getElementById('resume-captures');
+    const repEl = document.getElementById('resume-rep');
     if (killsEl) killsEl.textContent = saved.kills ?? 0;
-    if (capEl)   capEl.textContent   = saved.captures ?? 0;
+    if (capEl) capEl.textContent = saved.captures ?? 0;
 
     if (repEl && saved.rep) {
       const brothRep = saved.rep['BROTHERHOOD'] ?? 0;
@@ -765,10 +802,10 @@ class Game {
     }
 
     // Act dots
-    const dotsEl   = document.getElementById('resume-act-dots');
+    const dotsEl = document.getElementById('resume-act-dots');
     const actOrder = ['act1', 'act2', 'act3', 'final'];
-    const actNames  = ['Act I', 'Act II', 'Act III', 'Final'];
-    const curIdx    = actOrder.indexOf(saved.act ?? 'act1');
+    const actNames = ['Act I', 'Act II', 'Act III', 'Final'];
+    const curIdx = actOrder.indexOf(saved.act ?? 'act1');
     if (dotsEl) {
       dotsEl.innerHTML = '';
       actOrder.forEach((act, i) => {
@@ -787,7 +824,7 @@ class Game {
 
     // Wire buttons
     const continueBtn = document.getElementById('resume-continue-btn');
-    const newBtn      = document.getElementById('resume-new-btn');
+    const newBtn = document.getElementById('resume-new-btn');
 
     const cleanup = () => modal.classList.add('hidden');
 
@@ -847,7 +884,7 @@ class Game {
       const actOrder = ['act1', 'act2', 'act3', 'final'];
       const actNames = ['Act I', 'Act II', 'Act III', 'Final Act'];
       const curIdx = actOrder.indexOf(this.story._currentAct);
-      
+
       actTimeline.innerHTML = actOrder.map((act, idx) => {
         let cls = 'jact-dot';
         if (idx < curIdx) cls += ' done';
@@ -926,7 +963,7 @@ class Game {
         const rep = this.story.getFactionReputation(f.id);
         // Normalize: range -1000 to 2000
         const pct = Math.min(100, Math.max(0, ((rep + 1000) / 3000) * 100));
-        
+
         let standing = 'Neutral';
         let barColor = '#888';
         if (rep >= 1000) { standing = 'Venerated Ally'; barColor = '#22cc88'; }
@@ -976,13 +1013,13 @@ class Game {
           // Approach target: steer bow toward enemy
           let diff = ((targetAngle - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
           ally.steering = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.5);
-          ally.thrust   = 0.85;
+          ally.thrust = 0.85;
         } else {
           // Broadside battle: rotate to 90 degrees so broadside cannons face enemy
           const broadside = targetAngle + Math.PI / 2;
           let diff = ((broadside - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
           ally.steering = Math.sign(diff) * Math.min(1, Math.abs(diff) * 2.0);
-          ally.thrust   = 0.35;
+          ally.thrust = 0.35;
           if (Math.abs(diff) < 0.45) {
             this.combat.fireCannons(ally);
           }
@@ -998,13 +1035,13 @@ class Game {
             const ang = Math.atan2(tx, tz) + Math.PI;
             let df = ((ang - ally.group.rotation.y) % (Math.PI * 2) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
             ally.steering = Math.sign(df) * Math.min(1, Math.abs(df) * 3);
-            ally.thrust   = dToPlayer > 60 ? 0.9 : 0.4;
+            ally.thrust = dToPlayer > 60 ? 0.9 : 0.4;
           } else {
-            ally.thrust   = 0;
+            ally.thrust = 0;
             ally.steering = 0;
           }
         } else {
-          ally.thrust   = 0;
+          ally.thrust = 0;
           ally.steering = 0;
         }
       }
@@ -1038,12 +1075,12 @@ class Game {
 
     // Act Banner handler
     EventEmitter.on('story:act_banner', ({ title, subtitle, color }) => {
-      const banner    = document.getElementById('act-banner');
-      const titleEl   = document.getElementById('act-banner-title');
-      const subEl     = document.getElementById('act-banner-subtitle');
+      const banner = document.getElementById('act-banner');
+      const titleEl = document.getElementById('act-banner-title');
+      const subEl = document.getElementById('act-banner-subtitle');
       if (!banner || !titleEl || !subEl) return;
       titleEl.textContent = title;
-      subEl.textContent   = subtitle;
+      subEl.textContent = subtitle;
       banner.style.setProperty('--act-color', color);
       banner.classList.remove('hidden');
       banner.classList.add('active');
@@ -1080,13 +1117,13 @@ class Game {
     // Story Mode: legend dialogue also goes through DialogueSystem
     EventEmitter.on('world:legendary_dialogue', (data) => {
       // Still show the original legendary popup
-      const el    = document.getElementById('legendary-dialogue');
-      const nameEl  = document.getElementById('legend-name');
+      const el = document.getElementById('legendary-dialogue');
+      const nameEl = document.getElementById('legend-name');
       const titleEl = document.getElementById('legend-title');
       const angerEl = document.getElementById('legend-anger');
       const quoteEl = document.getElementById('legend-quote');
       if (el && nameEl) {
-        if (nameEl)  nameEl.textContent  = data.name;
+        if (nameEl) nameEl.textContent = data.name;
         if (titleEl) titleEl.textContent = data.title;
         if (angerEl) {
           const rage = data.angerLevel;
@@ -1152,7 +1189,7 @@ class Game {
         0,
         (Math.random() - 0.5) * 14,
       ));
-      const key   = lootKeys[Math.floor(Math.random() * lootKeys.length)];
+      const key = lootKeys[Math.floor(Math.random() * lootKeys.length)];
       const model = AssetLoader.get(key);
       model.position.copy(spawnPos);
       model.position.y = 1.5;
@@ -1167,9 +1204,9 @@ class Game {
 
   /** Show the styled Game Over overlay with final stats. */
   _showGameOver() {
-    const overlay   = document.getElementById('game-over-overlay');
-    const killsEl   = document.getElementById('go-kills');
-    const goldEl    = document.getElementById('go-gold');
+    const overlay = document.getElementById('game-over-overlay');
+    const killsEl = document.getElementById('go-kills');
+    const goldEl = document.getElementById('go-gold');
     const islandsEl = document.getElementById('go-islands');
     const btnRestart = document.getElementById('btn-restart');
 
@@ -1177,12 +1214,12 @@ class Game {
     const kills = this._killCount;
     const islands = this.islandSys?.capturedCount ?? 0;
 
-    if (killsEl)   killsEl.textContent   = kills;
-    if (goldEl)    goldEl.textContent    = gold;
+    if (killsEl) killsEl.textContent = kills;
+    if (goldEl) goldEl.textContent = gold;
     if (islandsEl) islandsEl.textContent = islands;
     const timeEl = document.getElementById('go-time');
-    if (timeEl)    timeEl.textContent    = this._formatTime(this._gameTimer);
-    if (overlay)   overlay.classList.remove('hidden');
+    if (timeEl) timeEl.textContent = this._formatTime(this._gameTimer);
+    if (overlay) overlay.classList.remove('hidden');
 
     if (btnRestart) {
       btnRestart.addEventListener('click', () => location.reload());
@@ -1219,9 +1256,9 @@ class Game {
   }
 
   async _submitAndLoadLeaderboard(score, prefix) {
-    const loadingEl   = document.getElementById(`${prefix}-leaderboard-loading`);
+    const loadingEl = document.getElementById(`${prefix}-leaderboard-loading`);
     const containerEl = document.getElementById(`${prefix}-leaderboard-container`);
-    const rowsEl      = document.getElementById(`${prefix}-leaderboard-rows`);
+    const rowsEl = document.getElementById(`${prefix}-leaderboard-rows`);
 
     if (!loadingEl || !containerEl || !rowsEl) return;
 
@@ -1230,16 +1267,16 @@ class Game {
     containerEl.classList.add('hidden');
     rowsEl.innerHTML = '';
 
-    const gold        = this.economy?.resources?.gold ?? 0;
-    const kills       = this._killCount;
-    const islands     = this.islandSys?.capturedCount ?? 0;
-    const time        = this._gameTimer ?? 0;
-    const allies      = this._allyShips?.filter(s => s.isAlive).length ?? 0;
-    const treasures   = this._treasuresFound ?? 0;
+    const gold = this.economy?.resources?.gold ?? 0;
+    const kills = this._killCount;
+    const islands = this.islandSys?.capturedCount ?? 0;
+    const time = this._gameTimer ?? 0;
+    const allies = this._allyShips?.filter(s => s.isAlive).length ?? 0;
+    const treasures = this._treasuresFound ?? 0;
     const bossDefeated = this._bossDefeated ?? false;
-    const outcome     = prefix === 'v' ? 'victory' : 'defeat';
+    const outcome = prefix === 'v' ? 'victory' : 'defeat';
 
-    const playerName  = this.playerName || 'Anonymous Pirate';
+    const playerName = this.playerName || 'Anonymous Pirate';
 
     // Auto-register guest if they don't have a registered ID yet
     if (!this.playerId) {
@@ -1515,6 +1552,13 @@ class Game {
     menuLoop();
 
     // ── Wire up menu buttons ──────────────────────────────────────────────────
+    if (this._menuButtonsWired) return;
+    this._menuButtonsWired = true;
+
+    // Quick Play button — immediate fleet battle
+    document.getElementById('mm-quickplay')?.addEventListener('click', () => {
+      this.startQuickPlay();
+    });
 
     // ── Story Mode button ──────────────────────────────────────────────────
     document.getElementById('mm-story')?.addEventListener('click', () => {
@@ -1528,7 +1572,7 @@ class Game {
             this._showResumeModal(saved, menu);
             return;
           }
-        } catch {}
+        } catch { }
       }
       // No save — start fresh
       this._launchStoryMode(menu, false);
@@ -1642,9 +1686,9 @@ class Game {
     if (menuFullscreenBtn) {
       const toggleMenuFullscreen = () => {
         if (!document.fullscreenElement) {
-          document.documentElement.requestFullscreen().catch(() => {});
+          document.documentElement.requestFullscreen().catch(() => { });
         } else {
-          document.exitFullscreen().catch(() => {});
+          document.exitFullscreen().catch(() => { });
         }
       };
 
@@ -1671,15 +1715,15 @@ class Game {
     // Live-update slider values and drive AudioSystem volumes
     ['master', 'music', 'sfx'].forEach(id => {
       const slider = document.getElementById(`s-${id}`);
-      const label  = document.getElementById(`sv-${id}`);
+      const label = document.getElementById(`sv-${id}`);
       if (slider && label) {
         slider.addEventListener('input', () => {
           label.textContent = slider.value;
           // Sync audio volumes whenever master or sfx slider moves
           if (this.audio) {
-            const m   = (document.getElementById('s-master')?.value ?? 80) / 100;
-            const s   = (document.getElementById('s-sfx')?.value    ?? 80) / 100;
-            const mus = (document.getElementById('s-music')?.value  ?? 60) / 100;
+            const m = (document.getElementById('s-master')?.value ?? 80) / 100;
+            const s = (document.getElementById('s-sfx')?.value ?? 80) / 100;
+            const mus = (document.getElementById('s-music')?.value ?? 60) / 100;
             this.audio.setVolumes(m, s, mus);
           }
         });
@@ -1708,12 +1752,12 @@ class Game {
 
   _getDailyRewardsSchedule() {
     return [
-      { day: 1, title: 'Starter Stash',     icon: '🪙', gold: 150, wood: 20, desc: '+150 Gold, +20 Wood' },
-      { day: 2, title: 'Deckhand Crew',     icon: '👥', gold: 250, crew: 15, desc: '+250 Gold, +15 Crew' },
-      { day: 3, title: 'Plank Hoard',       icon: '🪵', gold: 400, wood: 40, desc: '+400 Gold, +40 Wood' },
-      { day: 4, title: 'Iron Armory',       icon: '💣', gold: 600, crew: 20, desc: '+600 Gold, +20 Crew' },
-      { day: 5, title: 'Sunken Chest',      icon: '💰', gold: 900, wood: 50, desc: '+900 Gold, +50 Wood' },
-      { day: 6, title: 'Armada Cache',      icon: '⚔️', gold: 1300, crew: 30, desc: '+1,300 Gold, +30 Crew' },
+      { day: 1, title: 'Starter Stash', icon: '🪙', gold: 150, wood: 20, desc: '+150 Gold, +20 Wood' },
+      { day: 2, title: 'Deckhand Crew', icon: '👥', gold: 250, crew: 15, desc: '+250 Gold, +15 Crew' },
+      { day: 3, title: 'Plank Hoard', icon: '🪵', gold: 400, wood: 40, desc: '+400 Gold, +40 Wood' },
+      { day: 4, title: 'Iron Armory', icon: '💣', gold: 600, crew: 20, desc: '+600 Gold, +20 Crew' },
+      { day: 5, title: 'Sunken Chest', icon: '💰', gold: 900, wood: 50, desc: '+900 Gold, +50 Wood' },
+      { day: 6, title: 'Armada Cache', icon: '⚔️', gold: 1300, crew: 30, desc: '+1,300 Gold, +30 Crew' },
       { day: 7, title: 'Black Flag Bounty', icon: '👑', gold: 2000, wood: 80, crew: 40, desc: '+2,000 Gold, +80 Wood, +40 Crew' },
     ];
   }
@@ -1722,18 +1766,18 @@ class Game {
     try {
       const raw = localStorage.getItem('pe_daily_streak');
       if (raw) return JSON.parse(raw);
-    } catch {}
+    } catch { }
     return { lastClaimTime: 0, currentStreak: 0 };
   }
 
   _renderDailyRewardsModal() {
-    const trackEl  = document.getElementById('daily-streak-track');
+    const trackEl = document.getElementById('daily-streak-track');
     const claimBtn = document.getElementById('btn-claim-daily');
     if (!trackEl) return;
 
     const schedule = this._getDailyRewardsSchedule();
-    const state    = this._getDailyState();
-    const now      = Date.now();
+    const state = this._getDailyState();
+    const now = Date.now();
     const COOLDOWN = 20 * 60 * 60 * 1000;
     const STREAK_EXPIRE = 48 * 60 * 60 * 1000;
 
@@ -1760,7 +1804,7 @@ class Game {
       const isToday = item.day === activeDay && canClaim;
 
       if (isClaimed) card.classList.add('claimed');
-      if (isToday)   card.classList.add('today');
+      if (isToday) card.classList.add('today');
 
       card.innerHTML = `
         <div class="daily-day-num">Day ${item.day}</div>
@@ -1778,7 +1822,7 @@ class Game {
         claimBtn.disabled = true;
         const remainingMs = COOLDOWN - timeSinceLast;
         const hours = Math.floor(remainingMs / (1000 * 60 * 60));
-        const mins  = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
+        const mins = Math.floor((remainingMs % (1000 * 60 * 60)) / (1000 * 60));
         claimBtn.innerHTML = `⏳ &nbsp;Next Bounty in ${hours}h ${mins}m`;
       }
     }
@@ -1786,8 +1830,8 @@ class Game {
 
   _claimDailyReward() {
     const schedule = this._getDailyRewardsSchedule();
-    const state    = this._getDailyState();
-    const now      = Date.now();
+    const state = this._getDailyState();
+    const now = Date.now();
     const COOLDOWN = 20 * 60 * 60 * 1000;
     const STREAK_EXPIRE = 48 * 60 * 60 * 1000;
 
@@ -1806,7 +1850,7 @@ class Game {
     };
     try {
       localStorage.setItem('pe_daily_streak', JSON.stringify(newState));
-    } catch {}
+    } catch { }
 
     if (this.economy) {
       if (reward.gold) this.economy.add('gold', reward.gold);
@@ -1819,7 +1863,7 @@ class Game {
         curPending.wood = (curPending.wood || 0) + (reward.wood || 0);
         curPending.crew = (curPending.crew || 0) + (reward.crew || 0);
         localStorage.setItem('pe_pending_daily_bounty', JSON.stringify(curPending));
-      } catch {}
+      } catch { }
     }
 
     this.audio?.playSfx('loot');
@@ -1842,14 +1886,13 @@ class Game {
       const room = (params.get('room') || params.get('tb'))?.trim().toUpperCase();
       if (room && room.length === 6) {
         console.log('[MP] Auto-joining room from URL parameter:', room);
+        if (!this.matchmaking) {
+          this.matchmaking = new MatchmakingSystem(this);
+        }
         if (!this.teamBattleLobby) {
           this.teamBattleLobby = new TeamBattleLobbyUI(this);
         }
-        this.teamBattleLobby.show();
-        document.getElementById('tb-tab-join')?.click();
-        const input = document.getElementById('tb-join-input');
-        if (input) input.value = room;
-        this.joinTeamBattleRoom(room);
+        this.teamBattleLobby.startJoinPrivateFleet(room);
       }
     } catch (e) {
       console.warn('[MP] Auto-join check error:', e);
@@ -1864,32 +1907,20 @@ class Game {
     document.getElementById('mm-leaderboard-panel')?.classList.add('hidden');
     document.getElementById('daily-rewards-modal')?.classList.add('hidden');
 
+    if (!this.matchmaking) {
+      this.matchmaking = new MatchmakingSystem(this);
+    }
     if (!this.teamBattleLobby) {
       this.teamBattleLobby = new TeamBattleLobbyUI(this);
     }
-    this.teamBattleLobby.show();
-
-    // Auto-host relay room if not in MP session
-    if (!this.mp) {
-      this.mp = new MultiplayerSystem('HOST');
-      this.teamBattleLobby.setHostStatus('⚓ Initializing battle relay...');
-      this.mp.init((msg) => this.teamBattleLobby.setHostStatus(msg)).then(code => {
-        this.teamBattleLobby.setRoomCode(code);
-        this.teamBattleLobby.setHostStatus('✅ Ready! Share room code with captains');
-        this._wireTeamBattleNetworkEvents();
-      }).catch(err => {
-        this.teamBattleLobby.setHostStatus(`❌ Relay error: ${err.message}`, true);
-      });
-    } else {
-      this._wireTeamBattleNetworkEvents();
-    }
+    this.teamBattleLobby.showFleetCommand();
   }
 
   async joinTeamBattleRoom(code) {
     if (this.mp) {
-      this.mp.disconnect?.();
+      try { this.mp.disconnect?.(); } catch {}
     }
-    this.mp = new MultiplayerSystem('CLIENT', code);
+    this.mp = new MultiplayerSystem('CLIENT', code, this.playerName || 'Captain');
     this.teamBattleLobby.setJoinStatus('🔗 Connecting to Admiral...');
 
     try {
@@ -1899,6 +1930,7 @@ class Game {
       this.teamBattleLobby.renderRosters();
     } catch (err) {
       this.teamBattleLobby.setJoinStatus(`❌ ${err?.message || 'Connection failed'}`, true);
+      throw err;
     }
   }
 
@@ -1906,6 +1938,27 @@ class Game {
     if (this.mp?.connected) {
       this.mp.sendTeamBattleAction?.('SWITCH_TEAM', { team });
     }
+  }
+
+  startQuickPlay() {
+    // Sync pirate name from input field if player entered one
+    const nameInput = document.getElementById('mm-player-name');
+    if (nameInput?.value?.trim() && nameInput.value.trim().length >= 3) {
+      this.playerName = nameInput.value.trim();
+    }
+
+    // Clean up any stale or disconnected multiplayer instance
+    if (this.mp && !this.mp.connected) {
+      try { this.mp.disconnect?.(); } catch { }
+      this.mp = null;
+    }
+
+    if (!this.matchmaking) {
+      this.matchmaking = new MatchmakingSystem(this);
+    }
+
+    // Open dedicated Fleet Command matchmaking lobby
+    this._openTeamBattleLobby();
   }
 
   startTeamBattleMatch(mode, botFill) {
@@ -1929,14 +1982,44 @@ class Game {
       this.teamBattleLobby?.renderRosters();
       if (this.teamBattleLobby?.isOpen) {
         this.hud?.toast('⚓ Captain joined the battle fleet!', 'success');
+        if (this.mp.isHost) {
+          this.teamBattleLobby.broadcastLobbySync();
+        }
       }
+      if (this.isTeamBattle && this.teamBattle?.active) {
+        if (this.mp.isHost && this.mp._connections?.size > 0) {
+          for (const [peerId, conn] of this.mp._connections) {
+            this.teamBattle.handlePeerConnect(peerId, conn.peerName);
+          }
+          this.mp.sendTeamBattleState?.(this.teamBattle.getState());
+        }
+      }
+    };
+
+    this.mp.onPeerDisconnect = (peerId) => {
+      this.teamBattleLobby?.renderRosters();
+      if (this.teamBattleLobby?.isOpen && this.mp.isHost) {
+        this.teamBattleLobby.broadcastLobbySync();
+      }
+      this.hud?.toast('⚠️ A captain disconnected from the fleet', 'warning');
+      if (this.isTeamBattle && this.teamBattle?.active) {
+        this.teamBattle.handlePeerDisconnect?.(peerId);
+      }
+    };
+
+    this.mp.onTeamBattleLobby = (lobbyData) => {
+      this.teamBattleLobby?.applyRemoteLobbyData(lobbyData);
     };
 
     this.mp.onTeamBattleAction = (data) => {
       if (data?.action === 'START_MATCH') {
+        this.teamBattleLobby?.hide();
         this._launchTeamBattleGame(data.config);
       } else if (data?.action === 'SWITCH_TEAM') {
         this.teamBattleLobby?.renderRosters();
+      } else if (data?.action === 'HOST_LEFT') {
+        this.teamBattleLobby?.setLobbyStatus('❌ The Admiral has left the fleet.', true);
+        this.hud?.toast('⚠️ The Admiral has left the lobby', 'danger');
       } else if (data?.action === 'REMATCH') {
         document.getElementById('tb-victory-modal')?.classList.add('hidden');
         if (this.teamBattle) {
@@ -1961,6 +2044,15 @@ class Game {
           p = this.teamBattle.participants.find(part => !part.isBot && part.id !== 'local_player');
         }
         if (p && p.ship) {
+          if (p.ship.group && !p.ship.group.parent) {
+            this.scene.add(p.ship.group);
+          }
+          if (p.ship.group) p.ship.group.visible = true;
+          if (state.hp > 0 && (p.ship.state === 'SUNK' || p.ship.state === 'SINKING')) {
+            p.ship.state = 'SAILING';
+            p.ship._sinkTimer = 0;
+            this.ships?.registerShip(p.ship);
+          }
           p.ship.setPosition(state.x, state.y, state.z);
           p.ship.setRotationY(state.ry);
           p.ship.velocity?.set(state.vx, state.vy, state.vz);
@@ -1983,6 +2075,26 @@ class Game {
         this.teamBattle.applyIslandDamage(data.targetTeam, safeDmg);
         this.mp.sendTeamBattleState?.(this.teamBattle.getState());
       };
+
+      // Authoritative ship damage request from client
+      this.mp.onDamageRequest = (data) => {
+        if (!data?.id) return;
+        let ship = this.ships?.get(data.id);
+        if (!ship && this.teamBattle) {
+          const part = this.teamBattle.participants.find(p => p.ship?.id === data.id || p.id === data.id);
+          if (part) ship = part.ship;
+        }
+        if (ship && (ship.isSailing || ship.state === 'SAILING')) {
+          ship.takeDamage(data.dmg);
+        }
+      };
+    } else {
+      // Client: route player cannon hits on enemies to host for authoritative damage
+      if (this.combat) {
+        this.combat.onPlayerHitEnemy = (ship, damage) => {
+          this.mp.sendDamageRequest(ship.id, damage);
+        };
+      }
     }
 
     EventEmitter.on('mp:peer_disconnected', ({ peerId }) => {
@@ -2006,6 +2118,16 @@ class Game {
     this.teamBattle?.cleanBattlefield();
     this.hud?.hideTeamBattleHUD();
     document.getElementById('tb-victory-modal')?.classList.add('hidden');
+
+    // Clean up public room registry entry and heartbeats
+    this.matchmaking?.cleanupSession();
+
+    // Disconnect multiplayer session when returning to main menu
+    if (this.mp) {
+      try { this.mp.disconnect?.(); } catch { }
+      this.mp = null;
+    }
+
     if (this._islands) {
       for (const isl of this._islands) {
         if (isl.group) isl.group.visible = true;
@@ -2037,6 +2159,15 @@ class Game {
     if (this.hazards) {
       for (const h of this.hazards.getHazards()) {
         if (h.mesh) h.mesh.visible = false;
+      }
+    }
+    if (this.ships) {
+      // Purge any lingering sandbox ships (patrols, merchants, hazards) so only Team Battle ships exist
+      for (const ship of this.ships.all) {
+        if (ship !== this.playerShip) {
+          this.ships.unregisterShip(ship);
+          if (ship.group) this.scene.remove(ship.group);
+        }
       }
     }
 
@@ -2085,9 +2216,9 @@ class Game {
   }
 
   async _startCoopHost() {
-    const statusEl  = document.getElementById('coop-host-status');
-    const codeEl    = document.getElementById('coop-room-code');
-    const startBtn  = document.getElementById('coop-host-start');
+    const statusEl = document.getElementById('coop-host-status');
+    const codeEl = document.getElementById('coop-room-code');
+    const startBtn = document.getElementById('coop-host-start');
     const waitingEl = document.getElementById('coop-waiting-indicator');
 
     try {
@@ -2109,9 +2240,9 @@ class Game {
       // Wait for partner to connect
       this.mp.onConnected = () => {
         if (waitingEl) waitingEl.style.display = 'none';
-        if (startBtn)  startBtn.style.display   = '';
-        if (statusEl)  statusEl.textContent     = '🤝 First mate connected! Ready to sail!';
-        if (statusEl)  statusEl.className       = 'coop-status success';
+        if (startBtn) startBtn.style.display = '';
+        if (statusEl) statusEl.textContent = '🤝 First mate connected! Ready to sail!';
+        if (statusEl) statusEl.className = 'coop-status success';
       };
     } catch (err) {
       if (statusEl) { statusEl.textContent = `❌ Connection failed: ${err.message}`; statusEl.className = 'coop-status error'; }
@@ -2121,13 +2252,13 @@ class Game {
 
   async _startCoopClient(code) {
     const statusEl = document.getElementById('coop-join-status');
-    const joinBtn  = document.getElementById('coop-join-btn');
+    const joinBtn = document.getElementById('coop-join-btn');
     if (joinBtn) joinBtn.disabled = true;
     if (statusEl) statusEl.textContent = '🔗 Connecting...';
 
     try {
       this.mp = new MultiplayerSystem('CLIENT', code);
-      
+
       this.mp.onConnected = () => {
         if (statusEl) { statusEl.textContent = '✅ Connected to Captain! Loading seas...'; statusEl.className = 'coop-status success'; }
         // Auto-launch after brief delay
@@ -2171,7 +2302,7 @@ class Game {
       // Retries up to MAX_RETRIES times at RETRY_INTERVAL ms until the client ACKs.
       let _layoutAcked = false;
       let _layoutAttempt = 0;
-      const MAX_RETRIES    = 10;
+      const MAX_RETRIES = 10;
       const RETRY_INTERVAL = 2000;
 
       const _trySendLayout = () => {
@@ -2248,10 +2379,19 @@ class Game {
     // Wire MP events
     this.mp.onPartnerShipState = (state) => {
       if (this._partnerShip) {
+        if (this._partnerShip.group && !this._partnerShip.group.parent) {
+          this.scene.add(this._partnerShip.group);
+        }
+        if (this._partnerShip.group) this._partnerShip.group.visible = true;
+        if (state.hp > 0 && (this._partnerShip.state === 'SUNK' || this._partnerShip.state === 'SINKING')) {
+          this._partnerShip.state = 'SAILING';
+          this._partnerShip._sinkTimer = 0;
+          this.ships?.registerShip(this._partnerShip);
+        }
         this._partnerShip.group.position.set(state.x, state.y, state.z);
         this._partnerShip.group.rotation.y = state.ry;
         this._partnerShip.velocity?.set(state.vx, state.vy, state.vz);
-        this._partnerShip.health    = state.hp;
+        this._partnerShip.health = state.hp;
         this._partnerShip.maxHealth = state.mhp;
       }
     };
@@ -2317,8 +2457,8 @@ class Game {
             const local = this._islands.find(i => i.id === snapIsl.id);
             if (local) {
               local.captured = snapIsl.captured;
-              local.owner    = snapIsl.owner;
-              local.hp       = snapIsl.hp ?? local.hp;
+              local.owner = snapIsl.owner;
+              local.hp = snapIsl.hp ?? local.hp;
             }
           }
         }
@@ -2375,8 +2515,8 @@ class Game {
 
     // Reposition each island group to match host
     for (let i = 0; i < this._islands.length && i < hostIslands.length; i++) {
-      const localIsl  = this._islands[i];
-      const hostIsl   = hostIslands[i];
+      const localIsl = this._islands[i];
+      const hostIsl = hostIslands[i];
 
       // Move the Three.js group
       localIsl.group.position.set(hostIsl.x, 3, hostIsl.z);
@@ -2419,8 +2559,8 @@ class Game {
   }
 
   _showWorldLog(text) {
-    const ticker  = document.getElementById('world-log-ticker');
-    const textEl  = document.getElementById('world-log-text');
+    const ticker = document.getElementById('world-log-ticker');
+    const textEl = document.getElementById('world-log-text');
     if (!ticker || !textEl) return;
     textEl.textContent = text;
     ticker.classList.remove('hidden');
@@ -2443,12 +2583,16 @@ class Game {
   // ── Game Loop ─────────────────────────────────────────────────────────────
 
   start() {
+    if (this._running) return;
     this._running = true;
     this.clock.start();
     this._raf();
 
     // Background tab fallback to keep multiplayer simulation running
-    const checkBgTick = () => {
+    if (this._onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+    }
+    this._onVisibilityChange = () => {
       if (document.hidden) {
         if (!this._bgInterval) {
           let lastBgTime = performance.now();
@@ -2468,8 +2612,27 @@ class Game {
         this.clock.getDelta();
       }
     };
-    document.addEventListener('visibilitychange', checkBgTick);
-    checkBgTick();
+    document.addEventListener('visibilitychange', this._onVisibilityChange);
+    this._onVisibilityChange();
+  }
+
+  stop() {
+    this._running = false;
+    if (this._bgInterval) {
+      clearInterval(this._bgInterval);
+      this._bgInterval = null;
+    }
+    if (this._onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this._onVisibilityChange);
+      this._onVisibilityChange = null;
+    }
+  }
+
+  destroy() {
+    this.stop();
+    this.input?.destroy();
+    this.audio?.destroy?.();
+    this.mp?.disconnect();
   }
 
   _raf() {
@@ -2524,9 +2687,9 @@ class Game {
     // ── Weather / storm system ────────────────────────────────────────────────
     this._stormTimer -= delta;
     if (!this._stormActive && this._stormTimer <= 0) {
-      this._stormActive   = true;
+      this._stormActive = true;
       this._stormDuration = 30 + Math.random() * 30;
-      this._stormTimer    = 90 + Math.random() * 90;
+      this._stormTimer = 90 + Math.random() * 90;
       this.hud.toast('🌩️ A storm is brewing!', 'danger');
     }
     if (this._stormActive) {
@@ -2585,8 +2748,9 @@ class Game {
 
     // ── AI enemies ───────────────────────────────────────────────────────────
     if (this.playerShip?.isAlive) {
-      // In co-op CLIENT mode, the AI system has no active agents — run jitter-buffer interp instead
-      if (this.isCoop && this.mp?.isClient) {
+      if (this.isTeamBattle) {
+        // In Team Battle, bot ships are simulated by TeamBattleSystem._updateBots() on host
+      } else if (this.isCoop && this.mp?.isClient) {
         this.ai.tickJitterInterp(performance.now());
       } else {
         this.ai.update(delta, this.playerShip.group.position);
@@ -2594,13 +2758,13 @@ class Game {
     }
 
     // ── Island capture + passive income ──────────────────────────────────────
-    if (this.playerShip?.isAlive) {
+    if (this.playerShip?.isAlive && !this.isTeamBattle) {
       this.islandSys.update(delta, this.playerShip.group.position);
     }
     // ── Island healing ──────────────────────────────────────────────────────────────
     if (this.playerShip?.isAlive) {
-      const HEAL_RATE    = 8;    // HP per second
-      const HEAL_RANGE   = 35;   // world units
+      const HEAL_RATE = 8;    // HP per second
+      const HEAL_RANGE = 35;   // world units
       const WOOD_PER_SEC = 1.5;  // wood cost per second of healing
       const ship = this.playerShip;
       let nearIsland = false;
@@ -2672,7 +2836,7 @@ class Game {
       );
     }
 
-    const bossShip = this.ships.all.find(s => 
+    const bossShip = this.ships.all.find(s =>
       (s.faction === Faction.PIRATE_HUNTER || s.group?.name === "Silas Veynar's Dread") && s.isAlive
     );
     if (bossShip && !this._bossAnnounced) {
@@ -2745,7 +2909,7 @@ class Game {
     }
 
     // ── World Event System (living ocean simulation) ──────────────────────────
-    if (this.worldEvents) {
+    if (this.worldEvents && !this.isTeamBattle) {
       this.worldEvents.update(delta, this.playerShip?.group.position ?? null);
     }
 
@@ -2787,9 +2951,9 @@ class Game {
 
         // Rotate arrow relative to camera heading
         const playerAngle = this.playerShip.group.rotation.y;
-        const angleToWp   = Math.atan2(dx, dz);
-        const relAngle    = (angleToWp - playerAngle) * (180 / Math.PI);
-        const arrowEl     = document.getElementById('waypoint-arrow');
+        const angleToWp = Math.atan2(dx, dz);
+        const relAngle = (angleToWp - playerAngle) * (180 / Math.PI);
+        const arrowEl = document.getElementById('waypoint-arrow');
         if (arrowEl) arrowEl.style.transform = `rotate(${relAngle}deg)`;
 
         // Hide waypoint compass if within 50 units (arrived)
@@ -2801,10 +2965,12 @@ class Game {
     }
 
     // ── World hazards (bobbing wrecks / boats) ───────────────────────────────
-    this.hazards?.update(delta);
+    if (!this.isTeamBattle) {
+      this.hazards?.update(delta);
+    }
 
     // ── Rock collision — damages + repels the player ship ────────────────────
-    if (this.playerShip?.isSailing && this.hazards) {
+    if (this.playerShip?.isSailing && this.hazards && !this.isTeamBattle) {
       for (const h of this.hazards.getHazards()) {
         if (h.type !== 'rock') continue;
         const dx = h.mesh.position.x - this.playerShip.group.position.x;
@@ -2828,20 +2994,20 @@ class Game {
         this.mp.update(
           delta,
           this.playerShip,
-          this.mp.isHost ? this.economy   : null,
-          this.mp.isHost ? this._islands  : null,
+          this.mp.isHost ? this.economy : null,
+          this.mp.isHost ? this._islands : null,
           this.mp.isHost ? this.ai?.getSerializableState() : null,
           this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0,
         );
       } else if (this.isTeamBattle) {
-        // Team Battle: broadcast local player ship state at 20Hz
+        // Team Battle: broadcast local player ship state at 20Hz + sync dayPhase from host
         this.mp.update(
           delta,
           this.playerShip,
           null,
           null,
           null,
-          0
+          this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0
         );
       }
     }
@@ -2851,10 +3017,10 @@ class Game {
       // Update partner HUD
       const ps = this.mp.partnerState;
       if (ps) {
-        const hpFrac  = ps.mhp > 0 ? ps.hp / ps.mhp : 0;
-        const fillEl  = document.getElementById('coop-partner-hp-fill');
-        const textEl  = document.getElementById('coop-partner-hp-text');
-        const distEl  = document.getElementById('coop-partner-dist');
+        const hpFrac = ps.mhp > 0 ? ps.hp / ps.mhp : 0;
+        const fillEl = document.getElementById('coop-partner-hp-fill');
+        const textEl = document.getElementById('coop-partner-hp-text');
+        const distEl = document.getElementById('coop-partner-dist');
         if (fillEl) {
           fillEl.style.width = `${(hpFrac * 100).toFixed(0)}%`;
           fillEl.className = 'coop-partner-hp-fill' +
@@ -2864,7 +3030,7 @@ class Game {
         if (distEl && this.playerShip) {
           const dx = ps.x - this.playerShip.group.position.x;
           const dz = ps.z - this.playerShip.group.position.z;
-          const d  = Math.round(Math.sqrt(dx * dx + dz * dz));
+          const d = Math.round(Math.sqrt(dx * dx + dz * dz));
           distEl.textContent = `⚓ ${d}u away`;
         }
       }
@@ -2873,9 +3039,9 @@ class Game {
       if (this.mp._rescueActive) {
         const t = Math.max(0, Math.ceil(this.mp._rescueTimer));
         const timerEl = document.getElementById('rescue-timer-text');
-        const barEl   = document.getElementById('rescue-bar-fill');
+        const barEl = document.getElementById('rescue-bar-fill');
         if (timerEl) timerEl.textContent = t;
-        if (barEl)   barEl.style.width   = `${(t / 60) * 100}%`;
+        if (barEl) barEl.style.width = `${(t / 60) * 100}%`;
       }
 
       // G — Map ping
@@ -2921,7 +3087,7 @@ class Game {
       this.teamBattle.update(delta);
       if (this.mp?.isHost) {
         this._tbSyncTimer = (this._tbSyncTimer || 0) + delta;
-        if (this._tbSyncTimer >= 0.2) {
+        if (this._tbSyncTimer >= 0.1) {
           this._tbSyncTimer = 0;
           this.mp.sendTeamBattleState?.(this.teamBattle.getState());
         }
@@ -2936,12 +3102,12 @@ class Game {
   // ── World Debris ─────────────────────────────────────────────────────────
 
   _scatterDebris() {
-    const half   = GameConfig.WORLD_SIZE / 2 - 80;
-    const items  = ['barrel', 'crate', 'rocks-a', 'rocks-b', 'rocks-sand-a'];
-    const count  = 35;
+    const half = GameConfig.WORLD_SIZE / 2 - 80;
+    const items = ['barrel', 'crate', 'rocks-a', 'rocks-b', 'rocks-sand-a'];
+    const count = 35;
 
     for (let i = 0; i < count; i++) {
-      const key  = items[Math.floor(Math.random() * items.length)];
+      const key = items[Math.floor(Math.random() * items.length)];
       const mesh = AssetLoader.get(key);
 
       const x = (Math.random() * 2 - 1) * half;
@@ -2969,7 +3135,7 @@ class Game {
     if (!ship || !ship.isSailing) return;
     // Disable all controls after game over
     if (this._isGameOver) {
-      ship.thrust   = 0;
+      ship.thrust = 0;
       ship.steering = 0;
       return;
     }
@@ -3004,7 +3170,7 @@ class Game {
         ship.isDrifting = false;
         ship.velocity.multiplyScalar(0.08);
         ship.angularVelocity = 0;
-        ship.thrust   = 0;
+        ship.thrust = 0;
         ship.steering = 0;
       }
     } else {
@@ -3136,7 +3302,7 @@ async function bootstrap() {
       // Wreckage Siphon: 15% maxHealth vampiric plunder to player ship on kill
       if (game.playerShip && game.playerShip.isAlive) {
         const siphon = Math.max(15, Math.round(game.playerShip.maxHealth * 0.15));
-        const oldHp  = game.playerShip.health;
+        const oldHp = game.playerShip.health;
         game.playerShip.health = Math.min(game.playerShip.maxHealth, game.playerShip.health + siphon);
         const actualHeal = game.playerShip.health - oldHp;
         if (actualHeal > 0 && game.hud) {

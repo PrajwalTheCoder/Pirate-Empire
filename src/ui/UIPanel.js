@@ -49,10 +49,41 @@ export class UIPanel {
       // Only clear if no owned island is nearby (island:nearby null fires separately)
     });
 
-    // ── Stable delegated click handler for build cards ──────────────────────
-    // Uses event delegation on the PERSISTENT pane element so DOM rebuilds
-    // (which replace innerHTML) can never destroy the listener.
+    // ── Stable delegated click handler for build cards (Solo + Team Battle) ──
     document.getElementById('tab-build')?.addEventListener('click', (e) => {
+      const tbEl = e.target.closest('[data-tb-build]');
+      if (tbEl) {
+        const type = tbEl.dataset.tbBuild;
+        const tb = window.__game?.teamBattle;
+        if (!tb) return;
+        const myTeam = tb.participants.find(p => p.id === 'local_player')?.team || 'CRIMSON';
+        if (type === 'fortress') {
+          if (this._economy.canAfford({ gold: 100, wood: 150 })) {
+            this._economy.spend({ gold: 100, wood: 150 });
+            tb.applyIslandDamage(myTeam, -250); // heals fortress!
+            window.__game?.hud?.toast('🛡️ Fortress Ramparts Reinforced! +250 HP', 'success');
+            if (window.__game?.mp?.isHost) {
+              window.__game.mp.sendTeamBattleState?.(tb.getState());
+            } else {
+              window.__game?.mp?.sendTeamBattleIslandHit?.({ targetTeam: myTeam, damage: -250 });
+            }
+            this._renderActiveTab();
+          } else {
+            window.__game?.hud?.toast('❌ Need 100 Gold & 150 Wood!', 'danger');
+          }
+        } else if (type === 'repair') {
+          if (this._economy.canAfford({ gold: 150, wood: 100 })) {
+            this._economy.spend({ gold: 150, wood: 100 });
+            tb._dockRepairActive = true;
+            window.__game?.hud?.toast('🛠️ Dock Repair Station operational!', 'success');
+            this._renderActiveTab();
+          } else {
+            window.__game?.hud?.toast('❌ Need 150 Gold & 100 Wood!', 'danger');
+          }
+        }
+        return;
+      }
+
       const el = e.target.closest('[data-build]');
       if (!el) return;
       const buildingType = el.dataset.build;
@@ -67,11 +98,61 @@ export class UIPanel {
       }
     });
 
-    // ── Stable delegated click handler for recruit button ───────────────────
+    // ── Stable delegated click handler for Fleet commands & recruit ───────────
     document.getElementById('tab-fleet')?.addEventListener('click', (e) => {
+      const cmdEl = e.target.closest('[data-fleet-cmd]');
+      if (cmdEl) {
+        const cmd = cmdEl.dataset.fleetCmd;
+        window.__game?.teamBattle?.commandFleet(cmd);
+        this._renderActiveTab();
+        return;
+      }
       const el = e.target.closest('[data-recruit]');
       if (!el) return;
       EventEmitter.emit('fleet:recruit');
+    });
+
+    // ── Stable delegated click handler for Attack commands ───────────────────
+    document.getElementById('tab-attack')?.addEventListener('click', (e) => {
+      const atkEl = e.target.closest('[data-attack]');
+      if (atkEl) {
+        const action = atkEl.dataset.attack;
+        const playerShip = window.__game?.playerShip;
+        if (action === 'broadside') {
+          if (playerShip && playerShip.cannonCooldown <= 0) {
+            window.__game?.combat?.fireCannons(playerShip, 'BOTH');
+          } else {
+            window.__game?.hud?.toast('⏳ Cannons reloading...', 'danger');
+          }
+        } else if (action === 'anchor') {
+          if (playerShip) {
+            playerShip.isAnchored = !playerShip.isAnchored;
+            window.__game?.hud?.toast(playerShip.isAnchored ? '⚓ Anchor dropped!' : '⚓ Anchor raised!', 'info');
+          }
+        } else if (action === 'target') {
+          const enemies = window.__game?.ships?.enemies ?? [];
+          if (enemies.length > 0 && playerShip) {
+            let closest = null;
+            let minDist = Infinity;
+            for (const en of enemies) {
+              if (!en.isAlive || !en.group) continue;
+              const d = playerShip.group.position.distanceTo(en.group.position);
+              if (d < minDist) { minDist = d; closest = en; }
+            }
+            if (closest) {
+              window.__game?.hud?.toast(`🎯 Nearest Target: ${closest.shipClass.replace('_', ' ')} (${Math.round(minDist)}m)!`, 'gold');
+            }
+          }
+        }
+        return;
+      }
+      const ammoEl = e.target.closest('[data-ammo]');
+      if (ammoEl) {
+        const ammo = ammoEl.dataset.ammo;
+        window.__game?.combat?.setAmmoType(ammo);
+        window.__game?.hud?.toast(`💣 Selected Ammo: ${ammo} SHOT`, 'info');
+        this._renderActiveTab();
+      }
     });
 
     // Initial render
@@ -103,6 +184,42 @@ export class UIPanel {
   _renderFleet() {
     const pane = document.getElementById('tab-fleet');
     if (!pane) return;
+
+    if (window.__game?.isTeamBattle && window.__game?.teamBattle) {
+      const tb = window.__game.teamBattle;
+      const myTeam = tb.participants.find(p => p.id === 'local_player')?.team || 'CRIMSON';
+      const myFleet = tb.participants.filter(p => p.team === myTeam);
+
+      pane.innerHTML = `
+        <div class="fleet-list">
+          ${myFleet.map(p => {
+            const ship = p.ship;
+            const hp = ship ? Math.ceil(ship.health) : 0;
+            const mhp = ship?.maxHealth ?? 120;
+            const status = !ship || !ship.isAlive ? '💀 SUNK' : '⛵ SAILING';
+            return `
+              <div class="fleet-ship-card ${p.id === 'local_player' ? 'flagship-card' : ''}">
+                ${p.id === 'local_player' ? '👑' : '⛵'} <strong>${p.name}</strong>
+                &nbsp;|&nbsp; ❤️ ${hp}/${mhp}
+                &nbsp;|&nbsp; <span style="color:${ship?.isAlive ? '#2ecc71' : '#e74c3c'}">${status}</span>
+              </div>
+            `;
+          }).join('')}
+        </div>
+        <div class="recruit-section" style="display:flex;gap:8px;align-items:center;margin-top:4px;">
+          <button class="recruit-btn" data-fleet-cmd="FLAG" title="Order allies to contest central flag">
+            🚩 Focus Flag
+          </button>
+          <button class="recruit-btn" data-fleet-cmd="FORTRESS" title="Order allies to attack enemy fortress">
+            🏰 Bombard Fortress
+          </button>
+          <button class="recruit-btn" data-fleet-cmd="DEFEND" title="Order allies to defend home dock">
+            🛡️ Defend Dock
+          </button>
+        </div>
+      `;
+      return;
+    }
 
     const playerShips = this._ships.all.filter(s =>
       s.faction === 'PLAYER' && s.isAlive);
@@ -139,6 +256,28 @@ export class UIPanel {
     const pane = document.getElementById('tab-build');
     if (!pane) return;
 
+    if (window.__game?.isTeamBattle) {
+      const tb = window.__game?.teamBattle;
+      const canFortress = this._economy.canAfford({ gold: 100, wood: 150 });
+      const canRepair = this._economy.canAfford({ gold: 150, wood: 100 });
+      const isRepActive = tb?._dockRepairActive;
+
+      pane.innerHTML = `
+        <div class="tab-hint" style="margin-bottom:4px;">Home Fortress Field Fortifications</div>
+        <div class="build-grid">
+          <div class="build-card ${canFortress ? '' : 'cannot-afford'}" data-tb-build="fortress">
+            🛡️ Reinforce Fortress (+250 HP)
+            <span class="cost">🪙100 🪵150</span>
+          </div>
+          <div class="build-card ${isRepActive || !canRepair ? 'cannot-afford' : ''}" data-tb-build="repair">
+            ${isRepActive ? '✅ Repair Station (Active)' : '🛠️ Dock Repair Station'}
+            ${!isRepActive ? '<span class="cost">🪙150 🪵100</span>' : ''}
+          </div>
+        </div>
+      `;
+      return;
+    }
+
     const islandId = this._targetIslandId;
     const island   = islandId !== null ? this._islands.getIsland(islandId) : null;
 
@@ -163,18 +302,34 @@ export class UIPanel {
           </div>`;
         }).join('')}
       </div>`;
-    // Click handling is done via the stable delegated listener in the constructor.
   }
 
   // ── Attack ─────────────────────────────────────────────────────────────────
   _renderAttack() {
     const pane = document.getElementById('tab-attack');
     if (!pane) return;
+    const curAmmo = window.__game?.combat?.currentAmmoType || 'ROUND';
+
     pane.innerHTML = `
-      <div class="tab-hint" style="padding-top:4px;">
-        ⚔️ SPACE → Fire cannons (broadside both sides)<br/>
-        Q → Drop anchor (stop ship)<br/>
-        Approach enemies within cannon range to engage.
+      <div class="attack-controls-grid" style="display:flex;gap:8px;flex-wrap:wrap;padding:4px 0;">
+        <button class="recruit-btn" data-attack="broadside" style="background:#8b2500;" title="Fire both port and starboard broadsides">
+          💥 Fire Broadside [SPACE]
+        </button>
+        <button class="recruit-btn" data-attack="target" title="Scan and acquire nearest enemy ship">
+          🎯 Lock Nearest Target
+        </button>
+        <button class="recruit-btn" data-attack="anchor" title="Drop or raise ship anchor">
+          ⚓ Toggle Anchor [Q]
+        </button>
+        <button class="recruit-btn ${curAmmo === 'ROUND' ? 'cannot-afford' : ''}" data-ammo="ROUND">
+          💣 Round Shot [1]
+        </button>
+        <button class="recruit-btn ${curAmmo === 'CHAIN' ? 'cannot-afford' : ''}" data-ammo="CHAIN">
+          ⛓️ Chain Shot [2]
+        </button>
+        <button class="recruit-btn ${curAmmo === 'FIRE' ? 'cannot-afford' : ''}" data-ammo="FIRE">
+          🔥 Fire Shot [3]
+        </button>
       </div>`;
   }
 
@@ -205,7 +360,17 @@ export class UIPanel {
 
     pane.querySelectorAll('[data-upgrade]').forEach(el => {
       el.addEventListener('click', () => {
-        this._economy.purchaseUpgrade(el.dataset.upgrade);
+        const upgId = el.dataset.upgrade;
+        const success = this._economy.purchaseUpgrade(upgId);
+        if (success) {
+          const upg = GameConfig.UPGRADES.find(u => u.id === upgId);
+          window.__game?.hud?.toast(`⚙️ Upgrade Acquired: ${upg?.label}!`, 'success');
+          // In multiplayer, broadcast upgraded ship state immediately
+          if (window.__game?.mp?.connected && window.__game?.playerShip) {
+            window.__game.mp.sendShipState(window.__game.playerShip);
+          }
+          this._renderActiveTab();
+        }
       });
     });
   }

@@ -83,10 +83,12 @@ export class MultiplayerSystem {
   /**
    * @param {string} role — 'HOST' | 'CLIENT'
    * @param {string} [roomCode] — join code (CLIENT only)
+   * @param {string} [localPlayerName] — local player's captain name
    */
-  constructor(role, roomCode = null) {
+  constructor(role, roomCode = null, localPlayerName = '') {
     this.role       = role;    // 'HOST' or 'CLIENT'
     this.roomCode   = roomCode;
+    this._localPlayerName = localPlayerName || '';
     this.isHost     = role === 'HOST';
     this.isClient   = role === 'CLIENT';
 
@@ -142,6 +144,10 @@ export class MultiplayerSystem {
 
     // Version mismatch flag — set when partner runs an incompatible protocol version
     this._versionMismatch = false;
+  }
+
+  setLocalPlayerName(name) {
+    this._localPlayerName = name || '';
   }
 
   // ── Init ───────────────────────────────────────────────────────────────────
@@ -485,7 +491,7 @@ export class MultiplayerSystem {
 
           // ── JSON envelope (infrequent complex messages) ─────────────────────
           case NetPacker.TYPE.JSON_ENVELOPE:
-            this._handleJSONEnvelope(payload);
+            this._handleJSONEnvelope(payload, senderPeerId);
             break;
 
           default:
@@ -497,7 +503,7 @@ export class MultiplayerSystem {
       // ── Legacy fallback path (plain JSON string or object) ─────────────────
       // Handles old clients that haven't updated yet.
       const msg = (typeof raw === 'string') ? JSON.parse(raw) : raw;
-      this._handleJSONEnvelope(msg);
+      this._handleJSONEnvelope(msg, senderPeerId);
 
     } catch (e) {
       console.warn('[MP] Bad message:', e);
@@ -505,7 +511,7 @@ export class MultiplayerSystem {
   }
 
   /** Handle decoded JSON envelope { t, d }. */
-  _handleJSONEnvelope(msg) {
+  _handleJSONEnvelope(msg, senderPeerId = null) {
     if (!msg?.t) return;
     switch (msg.t) {
       case MSG.VERSION_HELLO: {
@@ -514,7 +520,11 @@ export class MultiplayerSystem {
         if (msg.d?.name) {
           this.partnerName = msg.d.name;
           this.partnerState.name = msg.d.name;
-          EventEmitter.emit('mp:partner_name', { name: msg.d.name });
+          if (senderPeerId && this._connections.has(senderPeerId)) {
+            const conn = this._connections.get(senderPeerId);
+            conn.peerName = msg.d.name;
+          }
+          EventEmitter.emit('mp:partner_name', { name: msg.d.name, peerId: senderPeerId });
         }
         if (theirVersion !== PROTOCOL_VERSION) {
           this._versionMismatch = true;

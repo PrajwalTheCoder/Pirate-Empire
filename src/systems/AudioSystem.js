@@ -333,6 +333,27 @@ export class AudioSystem {
     lp.connect(amp);
     amp.connect(this._masterGain);
     src.start();
+
+    // High-frequency wood splinter fracture crack
+    const crackLen  = Math.ceil(sr * 0.09);
+    const crackBuf  = ctx.createBuffer(1, crackLen, sr);
+    const crackData = crackBuf.getChannelData(0);
+    for (let i = 0; i < crackLen; i++) {
+      crackData[i] = (Math.random() * 2 - 1) * Math.exp(-i / (sr * 0.02));
+    }
+    const crackSrc  = ctx.createBufferSource();
+    crackSrc.buffer = crackBuf;
+    const bp        = ctx.createBiquadFilter();
+    bp.type         = 'bandpass';
+    bp.frequency.value = 1600;
+    bp.Q.value      = 2.5;
+    const crackGain = ctx.createGain();
+    crackGain.gain.setValueAtTime(vol * 0.5, ctx.currentTime);
+    crackGain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.09);
+    crackSrc.connect(bp);
+    bp.connect(crackGain);
+    crackGain.connect(this._masterGain);
+    crackSrc.start();
   }
 
   // ── Procedural Ocean Maritime Music Synthesizer ───────────────────────────

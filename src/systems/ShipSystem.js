@@ -312,6 +312,12 @@ export class Ship {
         this._spawnSmoke();
       }
 
+      this._sinkFrothTimer = (this._sinkFrothTimer || 0) + delta;
+      if (this._sinkFrothTimer > 0.08) {
+        this._sinkFrothTimer = 0;
+        this._spawnSinkFroth();
+      }
+
     // ── Phase 3 (70-100%): Stern tips up, vanish under the waves ──────────
     } else {
       const sinkT = (t - 0.70) / 0.30;
@@ -322,6 +328,12 @@ export class Ship {
       const rollTarget = this._sinkRollDir * Math.PI * 0.9;
       this.group.rotation.z = lerp(this.group.rotation.z, rollTarget, delta * 2.0);
       this.group.rotation.x = lerp(this.group.rotation.x, 0.5, delta * 1.5);
+
+      this._sinkFrothTimer = (this._sinkFrothTimer || 0) + delta;
+      if (this._sinkFrothTimer > 0.06) {
+        this._sinkFrothTimer = 0;
+        this._spawnSinkFroth();
+      }
     }
 
     if (this._sinkTimer >= GameConfig.SINKING_DURATION) {
@@ -330,6 +342,36 @@ export class Ship {
   }
 
   // ── Particle helpers ──────────────────────────────────────────────────────
+
+  /** Spawn water froth bubbles at waterline while sinking. */
+  _spawnSinkFroth() {
+    const geo = new THREE.SphereGeometry(0.22 + Math.random() * 0.2, 4, 3);
+    const mat = new THREE.MeshBasicMaterial({
+      color:       0xebf8ff,
+      transparent: true,
+      opacity:     0.82,
+      depthWrite:  false,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    const angle = Math.random() * Math.PI * 2;
+    const dist  = 1.0 + Math.random() * 3.0;
+    mesh.position.set(
+      this.group.position.x + Math.cos(angle) * dist,
+      0.1 + Math.random() * 0.25,
+      this.group.position.z + Math.sin(angle) * dist,
+    );
+    this.scene.add(mesh);
+    this._bowParticles.push({
+      mesh,
+      vel: new THREE.Vector3(
+        Math.cos(angle) * (0.8 + Math.random() * 0.5),
+        0.5 + Math.random() * 0.6,
+        Math.sin(angle) * (0.8 + Math.random() * 0.5),
+      ),
+      life:    0,
+      maxLife: 0.7 + Math.random() * 0.4,
+    });
+  }
 
   /** Spawn one smoke puff above the ship. */
   _spawnSmoke() {
@@ -491,6 +533,22 @@ export class Ship {
   _completeSink() {
     this.state = ShipState.SUNK;
 
+    // Clean up active smoke particles attached to scene
+    for (const p of this._smokeParticles) {
+      this.scene.remove(p.mesh);
+      p.mesh.geometry?.dispose();
+      p.mesh.material?.dispose();
+    }
+    this._smokeParticles.length = 0;
+
+    // Clean up active bow/froth particles attached to scene
+    for (const p of this._bowParticles) {
+      this.scene.remove(p.mesh);
+      p.mesh.geometry?.dispose();
+      p.mesh.material?.dispose();
+    }
+    this._bowParticles.length = 0;
+
     // Remove original model, place wreck
     this.scene.remove(this.group);
 
@@ -535,6 +593,18 @@ export class ShipSystem {
     return ship;
   }
 
+  /** Register or restore an existing ship instance into the tracking map. */
+  registerShip(ship) {
+    if (!ship || !ship.id) return;
+    this._ships.set(ship.id, ship);
+  }
+
+  /** Unregister a ship instance from tracking. */
+  unregisterShip(ship) {
+    if (!ship || !ship.id) return;
+    this._ships.delete(ship.id);
+  }
+
   /** Get a ship by id. */
   get(id) { return this._ships.get(id); }
 
@@ -551,6 +621,10 @@ export class ShipSystem {
   _cleanup() {
     for (const [id, ship] of this._ships) {
       if (ship.state === ShipState.SUNK) {
+        // Never purge player ship or team battle participants awaiting respawn
+        if (ship.faction === Faction.PLAYER || ship.team || ship._isRespawnable) {
+          continue;
+        }
         this._ships.delete(id);
       }
     }

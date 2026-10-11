@@ -242,31 +242,6 @@ class PerkOrb {
   }
 }
 
-// ─── PERK UI ──────────────────────────────────────────────────────────────────
-function showPerkCard(perk) {
-  // Remove any existing card first
-  document.getElementById('perk-card-overlay')?.remove();
-
-  const overlay = document.createElement('div');
-  overlay.id = 'perk-card-overlay';
-
-  const rarityClass = `perk-rarity-${perk.rarity}`;
-
-  overlay.innerHTML = `
-    <div class="perk-card ${rarityClass}">
-      <div class="perk-card-header">PERK UNLOCKED!</div>
-      <div class="perk-icon">${perk.icon}</div>
-      <div class="perk-name">${perk.name}</div>
-      <div class="perk-desc">${perk.desc}</div>
-      <div class="perk-rarity-badge">${perk.rarity.toUpperCase()}</div>
-    </div>
-  `;
-  document.body.appendChild(overlay);
-
-  // Auto-remove after 3.5s
-  setTimeout(() => overlay.remove(), 3500);
-}
-
 // ─── PERK SYSTEM ──────────────────────────────────────────────────────────────
 export class PerkSystem {
   /**
@@ -281,14 +256,17 @@ export class PerkSystem {
 
     // Active perks on the player (id → count)
     this._activePerkIds = new Map();
+    this.perkPoints = 1; // Start with 1 perk point
 
     // Player ref (may change on ship upgrade)
     this.playerShip = playerShip;
 
-    // Listen for enemy sinks to drop orbs
+    // Listen for enemy sinks to drop orbs and award perk points
     EventEmitter.on('ship:destroyed', ({ ship }) => {
       if (ship.faction !== 'PLAYER') {
+        this.perkPoints += 1;
         this._trySpawnOrb(ship.group.position.clone());
+        this._refreshPerkUI();
       }
     });
 
@@ -297,8 +275,8 @@ export class PerkSystem {
       this._economy.add('gold', gold);
     });
 
-    // Build perk HUD bar
-    this._buildPerkBar();
+    // Build compact corner card UI
+    this._buildPerkUI();
   }
 
   // ── Public ────────────────────────────────────────────────────────────────
@@ -336,6 +314,40 @@ export class PerkSystem {
     }
   }
 
+  /**
+   * Authoritatively unlock / activate a perk on the player's ship.
+   * @param {string} perkId
+   * @returns {boolean}
+   */
+  unlockPerk(perkId) {
+    const perk = PERKS.find(p => p.id === perkId);
+    if (!perk || !this.playerShip) return false;
+
+    // Check if already active
+    if (this._activePerkIds.has(perkId)) return false;
+
+    // Cost: 1 perk point, or 250 gold
+    if (this.perkPoints > 0) {
+      this.perkPoints -= 1;
+    } else if (this._economy && this._economy.canAfford({ gold: 250 })) {
+      this._economy.spend({ gold: 250 });
+    } else {
+      window.__game?.hud?.toast('❌ Need 1 Perk Point or 250 Gold!', 'danger');
+      return false;
+    }
+
+    // Apply stat effects directly to the player ship
+    perk.apply(this.playerShip);
+    this._activePerkIds.set(perkId, 1);
+
+    // Toast & sound feedback
+    window.__game?.hud?.toast(`⚔️ Activated Perk: ${perk.name}!`, 'success');
+    EventEmitter.emit('perk:collected', { perk });
+
+    this._refreshPerkUI();
+    return true;
+  }
+
   // ── Private ───────────────────────────────────────────────────────────────
 
   /** Pick a weighted-random perk. */
@@ -350,56 +362,123 @@ export class PerkSystem {
 
   /** Spawn a perk orb at the given world position (60% drop chance). */
   _trySpawnOrb(position) {
-    if (Math.random() > 0.60) return;   // 60% drop chance per kill
+    if (Math.random() > 0.60) return;
     const perk = this._pickPerk();
     const orb  = new PerkOrb(this._scene, position, perk);
     this._orbs.push(orb);
   }
 
-  /** Apply a perk to the player ship. */
+  /** Apply a perk collected from a floating orb. */
   _collectOrb(orb, ship) {
     orb.collect();
     const perk = orb.perk;
 
-    // Apply stat effect
     perk.apply(ship);
-
-    // Track active perks
     const count = (this._activePerkIds.get(perk.id) ?? 0) + 1;
     this._activePerkIds.set(perk.id, count);
 
-    // Show fancy card
-    showPerkCard(perk);
-
-    // Toast
+    window.__game?.hud?.toast(`✨ Plundered Perk: ${perk.name}!`, 'gold');
     EventEmitter.emit('perk:collected', { perk });
 
-    // Update perk bar
-    this._refreshPerkBar();
+    this._refreshPerkUI();
   }
 
-  _buildPerkBar() {
-    let bar = document.getElementById('perk-bar');
-    if (bar) return;
-    bar = document.createElement('div');
-    bar.id = 'perk-bar';
-    bar.innerHTML = '<div class="perk-bar-title">PERKS</div><div class="perk-bar-slots" id="perk-bar-slots"></div>';
-    document.body.appendChild(bar);
+  _buildPerkUI() {
+    let card = document.getElementById('perk-corner-card');
+    if (card) return;
+
+    card = document.createElement('div');
+    card.id = 'perk-corner-card';
+    card.innerHTML = `
+      <button id="perk-toggle-btn" class="perk-toggle-btn" title="Toggle Captain Perks">
+        📜 Perks <span class="perk-pts-badge" id="perk-pts-badge">★ ${this.perkPoints}</span>
+      </button>
+      <div id="perk-corner-panel" class="perk-corner-panel hidden">
+        <div class="perk-panel-header">
+          <div class="perk-header-title">☠️ CAPTAIN PERKS</div>
+          <div class="perk-header-pts" id="perk-header-pts">Points: ★ ${this.perkPoints}</div>
+          <button class="perk-close-btn" id="perk-close-btn">✕</button>
+        </div>
+        <div class="perk-panel-list" id="perk-panel-list"></div>
+      </div>
+    `;
+    document.body.appendChild(card);
+
+    const toggleBtn = document.getElementById('perk-toggle-btn');
+    const panel = document.getElementById('perk-corner-panel');
+    const closeBtn = document.getElementById('perk-close-btn');
+
+    toggleBtn?.addEventListener('click', () => {
+      panel?.classList.toggle('hidden');
+      this._refreshPerkUI();
+    });
+
+    closeBtn?.addEventListener('click', () => {
+      panel?.classList.add('hidden');
+    });
+
+    // Delegate perk activation clicks
+    panel?.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-perk-id]');
+      if (!btn) return;
+      const pid = btn.dataset.perkId;
+      this.unlockPerk(pid);
+    });
+
+    this._refreshPerkUI();
   }
 
-  _refreshPerkBar() {
-    const slots = document.getElementById('perk-bar-slots');
-    if (!slots) return;
-    slots.innerHTML = '';
-    for (const [id, count] of this._activePerkIds) {
-      const perk = PERKS.find(p => p.id === id);
-      if (!perk) continue;
-      const el = document.createElement('div');
-      el.className = `perk-pip perk-rarity-${perk.rarity}`;
-      el.title = `${perk.name}: ${perk.desc}`;
-      el.innerHTML = `<span class="perk-pip-icon">${perk.icon}</span>${count > 1 ? `<span class="perk-pip-count">×${count}</span>` : ''}`;
-      slots.appendChild(el);
-    }
+  _refreshPerkUI() {
+    const ptsBadge = document.getElementById('perk-pts-badge');
+    const headerPts = document.getElementById('perk-header-pts');
+    if (ptsBadge) ptsBadge.textContent = `★ ${this.perkPoints}`;
+    if (headerPts) headerPts.textContent = `Points: ★ ${this.perkPoints}`;
+
+    const list = document.getElementById('perk-panel-list');
+    if (!list) return;
+
+    const gold = this._economy?.gold ?? 0;
+
+    list.innerHTML = PERKS.map(p => {
+      const isActive = this._activePerkIds.has(p.id);
+      const canAffordPoints = this.perkPoints > 0;
+      const canAffordGold = gold >= 250;
+
+      let btnLabel = '';
+      let btnCls = 'perk-buy-btn';
+      let disabled = false;
+
+      if (isActive) {
+        btnLabel = 'Active';
+        btnCls += ' active-btn';
+        disabled = true;
+      } else if (canAffordPoints) {
+        btnLabel = '★ 1 Pt';
+        btnCls += ' point-btn';
+      } else if (canAffordGold) {
+        btnLabel = '🪙 250g';
+        btnCls += ' gold-btn';
+      } else {
+        btnLabel = '🔒 Locked';
+        btnCls += ' locked-btn';
+        disabled = true;
+      }
+
+      return `
+        <div class="perk-row perk-rarity-${p.rarity} ${isActive ? 'is-active' : ''}">
+          <div class="perk-row-left">
+            <span class="perk-row-icon">${p.icon}</span>
+            <div class="perk-row-text">
+              <div class="perk-row-name">${p.name}</div>
+              <div class="perk-row-desc">${p.desc}</div>
+            </div>
+          </div>
+          <button class="${btnCls}" data-perk-id="${p.id}" ${disabled ? 'disabled' : ''}>
+            ${btnLabel}
+          </button>
+        </div>
+      `;
+    }).join('');
   }
 }
 

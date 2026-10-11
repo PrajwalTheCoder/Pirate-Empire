@@ -85,8 +85,12 @@ export class HUD {
       this.toast(`💥 Island #${island.id} has fallen!`, 'danger'));
     EventEmitter.on('ship:hit', ({ ship, damage }) => {
       if (ship?.group?.position) {
-        const type = ship.faction === 'PLAYER' ? 'player' : 'enemy';
+        const isPlayer = ship.faction === 'PLAYER' || ship === window.__game?.playerShip;
+        const type = isPlayer ? 'player' : 'enemy';
         this.spawnDamageNumber(Math.ceil(damage), ship.group.position.clone(), type);
+        if (isPlayer) {
+          this.showDamageFlash();
+        }
       }
     });
     EventEmitter.on('upgrade:purchased', ({ upgrade }) =>
@@ -136,6 +140,29 @@ export class HUD {
 
   _hidePrompt() {
     if (this._prompt) this._prompt.classList.add('hidden');
+  }
+
+  _initDamageVignette() {
+    let el = document.getElementById('damage-vignette');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'damage-vignette';
+      document.body.appendChild(el);
+    }
+    this._damageVignetteEl = el;
+  }
+
+  showDamageFlash() {
+    if (!this._damageVignetteEl) this._initDamageVignette();
+    const el = this._damageVignetteEl;
+    if (!el) return;
+    el.classList.remove('active');
+    void el.offsetWidth; // force reflow
+    el.classList.add('active');
+    clearTimeout(this._vignetteTimeout);
+    this._vignetteTimeout = setTimeout(() => {
+      el.classList.remove('active');
+    }, 280);
   }
 
   // ── Floating Damage Numbers ───────────────────────────────────────────────
@@ -639,6 +666,84 @@ export class HUD {
     if (hudEl) hudEl.classList.add('hidden');
     const announceEl = document.getElementById('tb-announcement');
     if (announceEl) announceEl.remove();
+    this.hideRespawnCountdown();
+  }
+
+  // ── Respawn Countdown UI ──────────────────────────────────────────────────
+
+  _initRespawnOverlay() {
+    let overlay = document.getElementById('respawn-countdown-overlay');
+    if (!overlay) {
+      overlay = document.createElement('div');
+      overlay.id = 'respawn-countdown-overlay';
+      overlay.className = 'respawn-overlay hidden';
+      overlay.innerHTML = `
+        <div class="respawn-card">
+          <div class="respawn-skull">☠</div>
+          <h2 class="respawn-title">SHIP DESTROYED</h2>
+          <p class="respawn-sub">Your vessel has been sunk to the depths.</p>
+          <div class="respawn-badge">RESPAWNING IN</div>
+          <div class="respawn-counter" id="respawn-timer-num">8</div>
+          <div class="respawn-ready-banner hidden" id="respawn-ready-txt">⚔️ YOUR SHIP IS READY</div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+    }
+    this._respawnOverlay = overlay;
+  }
+
+  /**
+   * Display prominent respawn countdown overlay when player's ship sinks.
+   * @param {number} [initialSeconds=8]
+   */
+  showRespawnCountdown(initialSeconds = 8) {
+    if (!this._respawnOverlay) this._initRespawnOverlay();
+    const overlay = this._respawnOverlay;
+    const numEl = document.getElementById('respawn-timer-num');
+    const readyEl = document.getElementById('respawn-ready-txt');
+
+    if (numEl) {
+      numEl.textContent = Math.max(1, Math.ceil(initialSeconds));
+      numEl.style.display = 'block';
+    }
+    if (readyEl) readyEl.classList.add('hidden');
+
+    overlay.classList.remove('hidden');
+  }
+
+  /**
+   * Update countdown numbers directly from authoritative respawn queue timer.
+   * @param {number} remainingSeconds
+   */
+  updateRespawnCountdown(remainingSeconds) {
+    if (!this._respawnOverlay || this._respawnOverlay.classList.contains('hidden')) {
+      if (remainingSeconds > 0) this.showRespawnCountdown(remainingSeconds);
+      else return;
+    }
+
+    const numEl = document.getElementById('respawn-timer-num');
+    const readyEl = document.getElementById('respawn-ready-txt');
+    const safeSecs = Math.max(0, Math.ceil(remainingSeconds));
+
+    if (safeSecs > 0) {
+      if (numEl) {
+        numEl.textContent = safeSecs;
+        numEl.style.display = 'block';
+      }
+      if (readyEl) readyEl.classList.add('hidden');
+    } else {
+      if (numEl) numEl.style.display = 'none';
+      if (readyEl) readyEl.classList.remove('hidden');
+    }
+  }
+
+  /**
+   * Hide respawn countdown overlay once player respawns or match ends.
+   */
+  hideRespawnCountdown() {
+    if (this._respawnOverlay) {
+      this._respawnOverlay.classList.add('hidden');
+    }
   }
 
   /**

@@ -129,7 +129,35 @@ export class TeamBattleSystem {
     // 3. Build Neutral Central Flag Island
     this._buildCentralIsland();
 
+    // 4. Register island collision boundaries with ShipSystem & CombatSystem so ships and projectiles cannot enter islands
+    const arenaIslands = this.getIslands();
+    this.game.ships?.setIslands(arenaIslands);
+    this.game.combat?.setIslands(arenaIslands);
+
     this.active = true;
+  }
+
+  /**
+   * Return island collision descriptors for the Team Battle arena.
+   */
+  getIslands() {
+    return [
+      {
+        id: 'tb_island_crimson',
+        position: new THREE.Vector3(TeamConfig[Team.CRIMSON].islandPos.x, 0, TeamConfig[Team.CRIMSON].islandPos.z),
+        collisionRadius: 36,
+      },
+      {
+        id: 'tb_island_blacktide',
+        position: new THREE.Vector3(TeamConfig[Team.BLACK_TIDE].islandPos.x, 0, TeamConfig[Team.BLACK_TIDE].islandPos.z),
+        collisionRadius: 36,
+      },
+      {
+        id: 'tb_island_central',
+        position: new THREE.Vector3(0, 0, 0),
+        collisionRadius: 28,
+      },
+    ];
   }
 
   /**
@@ -140,62 +168,101 @@ export class TeamBattleSystem {
     const cfg = TeamConfig[team];
     const group = new THREE.Group();
     group.name = `island_${team}`;
-    group.position.copy(cfg.islandPos);
+    group.position.set(cfg.islandPos.x, 0, cfg.islandPos.z);
 
-    // Sand base terrain
-    const sand = AssetLoader.get('patch-sand');
-    sand.scale.set(3.8, 2.5, 3.8);
-    group.add(sand);
+    // ── Solid Land Foundation ────────────────────────────────────────────────
+    // Natural materials — do NOT project colormap 256-color palette onto procedural cylinders
+    const sandMat = new THREE.MeshLambertMaterial({ color: 0xd6bf87 });
+    const grassMat = new THREE.MeshLambertMaterial({ color: 0x3d7028 });
+    const rockRimMat = new THREE.MeshLambertMaterial({ color: 0x544f46 });
 
-    // Grass patch on top
-    const grass = AssetLoader.get('patch-grass');
-    grass.scale.set(2.8, 1.5, 2.8);
-    grass.position.set(0, 1.2, 0);
-    group.add(grass);
+    // Shoreline rock rim at water edge
+    const rockGeo = new THREE.CylinderGeometry(36, 39, 1.4, 36);
+    const rockBase = new THREE.Mesh(rockGeo, rockRimMat);
+    rockBase.position.set(0, 0.2, 0);
+    rockBase.receiveShadow = true;
+    group.add(rockBase);
+
+    // Primary sandy landmass (radius 35 at waterline)
+    const baseGeo = new THREE.CylinderGeometry(34, 37, 2.6, 36);
+    const baseMesh = new THREE.Mesh(baseGeo, sandMat);
+    baseMesh.position.set(0, 0.8, 0);
+    baseMesh.receiveShadow = true;
+    group.add(baseMesh);
+
+    // Elevated grass terrace for main keep & ramparts
+    const grassGeo = new THREE.CylinderGeometry(27, 31, 1.4, 32);
+    const grassPlateau = new THREE.Mesh(grassGeo, grassMat);
+    grassPlateau.position.set(0, 1.9, 0);
+    grassPlateau.receiveShadow = true;
+    group.add(grassPlateau);
+
+    // Natural layered Kenney sand & grass patches covering terrain surface
+    const sandCenter = AssetLoader.get('patch-sand');
+    sandCenter.scale.set(6.0, 2.2, 6.0);
+    sandCenter.position.set(0, 1.2, 0);
+    group.add(sandCenter);
+
+    const grassCenter = AssetLoader.get('patch-grass');
+    grassCenter.scale.set(4.5, 1.8, 4.5);
+    grassCenter.position.set(0, 2.2, 0);
+    group.add(grassCenter);
+
+    // Seaward artillery terrace directly supporting the defense cannons
+    const cannonTerrace = AssetLoader.get('patch-sand');
+    cannonTerrace.scale.set(4.0, 2.0, 6.5);
+    cannonTerrace.position.set(team === Team.CRIMSON ? 17 : -17, 1.4, 0);
+    group.add(cannonTerrace);
+
+    // Rear bastion terrace supporting watchtowers
+    const rearTerrace = AssetLoader.get('patch-sand');
+    rearTerrace.scale.set(4.0, 2.0, 5.5);
+    rearTerrace.position.set(team === Team.CRIMSON ? -16 : 16, 1.4, 0);
+    group.add(rearTerrace);
 
     // Castle Gate / Main Keep
     const gate = AssetLoader.get('castle-gate');
     gate.scale.setScalar(1.4);
-    gate.position.set(0, 1.8, 0);
+    gate.position.set(0, 2.4, 0);
     gate.rotation.y = cfg.facingRad;
     group.add(gate);
 
     // Defensive Castle Walls flanking gate
     const wallLeft = AssetLoader.get('castle-wall');
     wallLeft.scale.setScalar(1.3);
-    wallLeft.position.set(team === Team.CRIMSON ? 4 : -4, 1.8, -14);
+    wallLeft.position.set(team === Team.CRIMSON ? 4 : -4, 2.4, -14);
     wallLeft.rotation.y = cfg.facingRad;
     group.add(wallLeft);
 
     const wallRight = AssetLoader.get('castle-wall');
     wallRight.scale.setScalar(1.3);
-    wallRight.position.set(team === Team.CRIMSON ? 4 : -4, 1.8, 14);
+    wallRight.position.set(team === Team.CRIMSON ? 4 : -4, 2.4, 14);
     wallRight.rotation.y = cfg.facingRad;
     group.add(wallRight);
 
     // Watchtower
     const tower = AssetLoader.get('tower-watch');
     tower.scale.setScalar(1.3);
-    tower.position.set(team === Team.CRIMSON ? -15 : 15, 1.8, -12);
+    tower.position.set(team === Team.CRIMSON ? -15 : 15, 2.4, -12);
     group.add(tower);
 
     // Large Keep Tower
     const towerLarge = AssetLoader.get('tower-complete-large');
     towerLarge.scale.setScalar(1.2);
-    towerLarge.position.set(team === Team.CRIMSON ? -16 : 16, 1.8, 12);
+    towerLarge.position.set(team === Team.CRIMSON ? -16 : 16, 2.4, 12);
     group.add(towerLarge);
 
-    // Dock structure where ships moor/spawn
+    // Dock structure where ships moor/spawn (connecting seamlessly to the shoreline)
     const dock = AssetLoader.get('structure-platform-dock');
     dock.scale.set(2.0, 1.5, 3.5);
-    dock.position.set(team === Team.CRIMSON ? 48 : -48, -1.2, 0);
+    dock.position.set(team === Team.CRIMSON ? 44 : -44, 0.4, 0);
     dock.rotation.y = cfg.facingRad;
     group.add(dock);
 
     // Team Flag atop fortress
     const flag = AssetLoader.get('flag-pirate-high');
     flag.scale.setScalar(1.5);
-    flag.position.set(0, 8.5, 0);
+    flag.position.set(0, 9.2, 0);
     flag.traverse((child) => {
       if (child.isMesh && child.material) {
         child.material = child.material.clone();
@@ -204,12 +271,12 @@ export class TeamBattleSystem {
     });
     group.add(flag);
 
-    // Defense Cannons facing seaward
+    // Defense Cannons facing seaward — firmly planted on the cannon terrace land
     const cannonZ = [-18, 0, 18];
     for (const z of cannonZ) {
       const cannon = AssetLoader.get('cannon');
       cannon.scale.setScalar(1.4);
-      cannon.position.set(team === Team.CRIMSON ? 18 : -18, 1.6, z);
+      cannon.position.set(team === Team.CRIMSON ? 18 : -18, 2.4, z);
       cannon.rotation.y = cfg.facingRad;
       group.add(cannon);
 
@@ -221,26 +288,26 @@ export class TeamBattleSystem {
       });
     }
 
-    // Palms & Scenery
+    // Palms & Scenery firmly planted on terrain
     const palmPositions = [
       [-10, 8], [-22, 0], [-10, -8], [12, -20], [12, 20]
     ];
     for (const [px, pz] of palmPositions) {
       const palm = AssetLoader.get('palm-detailed-straight');
       palm.scale.setScalar(randRange(1.0, 1.4));
-      palm.position.set(px, 1.6, pz);
+      palm.position.set(px, 2.2, pz);
       group.add(palm);
     }
 
-    // Rocky shoreline cover
+    // Rocky shoreline cover at the water boundary
     const rock = AssetLoader.get('rocks-a');
     rock.scale.setScalar(2.0);
-    rock.position.set(team === Team.CRIMSON ? 28 : -28, 0, 24);
+    rock.position.set(team === Team.CRIMSON ? 28 : -28, 0.8, 24);
     group.add(rock);
 
     const rock2 = AssetLoader.get('rocks-b');
     rock2.scale.setScalar(2.0);
-    rock2.position.set(team === Team.CRIMSON ? 28 : -28, 0, -24);
+    rock2.position.set(team === Team.CRIMSON ? 28 : -28, 0.8, -24);
     group.add(rock2);
 
     this._mapGroup.add(group);
@@ -252,50 +319,86 @@ export class TeamBattleSystem {
   _buildCentralIsland() {
     const group = new THREE.Group();
     group.name = 'island_central';
-    group.position.set(0, 3, 0);
+    group.position.set(0, 0, 0);
 
-    // Sand terrain base
+    // ── Solid Land Foundation ────────────────────────────────────────────────
+    // Natural Caribbean sand and lush green grass (no colormap texture on procedural geometry)
+    const sandMat = new THREE.MeshLambertMaterial({ color: 0xd6bf87 });
+    const grassMat = new THREE.MeshLambertMaterial({ color: 0x3d7028 });
+    const rockRimMat = new THREE.MeshLambertMaterial({ color: 0x544f46 });
+
+    // Shoreline rock foundation ring at water level
+    const rockGeo = new THREE.CylinderGeometry(29, 32, 1.4, 32);
+    const rockBase = new THREE.Mesh(rockGeo, rockRimMat);
+    rockBase.position.set(0, 0.2, 0);
+    rockBase.receiveShadow = true;
+    group.add(rockBase);
+
+    // Primary sand island base (radius 27 units at waterline)
+    const baseGeo = new THREE.CylinderGeometry(27, 29.5, 2.5, 32);
+    const baseMesh = new THREE.Mesh(baseGeo, sandMat);
+    baseMesh.position.set(0, 0.7, 0);
+    baseMesh.receiveShadow = true;
+    group.add(baseMesh);
+
+    // Elevated grassy hillock in center
+    const grassGeo = new THREE.CylinderGeometry(18, 22, 1.3, 28);
+    const grassHill = new THREE.Mesh(grassGeo, grassMat);
+    grassHill.position.set(0, 1.8, 0);
+    grassHill.receiveShadow = true;
+    group.add(grassHill);
+
+    // Layered Kenney sand and grass patch modules
     const sand = AssetLoader.get('patch-sand');
-    sand.scale.set(3.2, 2.2, 3.2);
+    sand.scale.set(5.5, 2.2, 5.5);
+    sand.position.set(0, 1.2, 0);
     group.add(sand);
 
     const grass = AssetLoader.get('patch-grass');
-    grass.scale.set(2.4, 1.4, 2.4);
-    grass.position.set(0, 1.1, 0);
+    grass.scale.set(4.0, 1.6, 4.0);
+    grass.position.set(0, 2.1, 0);
     group.add(grass);
 
-    // Central Flagpole & Pennant
+    // Natural wooden landing dock connecting land to water
+    const dock = AssetLoader.get('structure-platform-dock');
+    dock.scale.set(1.4, 1.4, 1.8);
+    dock.position.set(0, 0.7, 25);
+    dock.rotation.y = Math.PI;
+    group.add(dock);
+
+    // Central Flagpole firmly planted in the grass
     const flagpole = AssetLoader.get('flag-pirate-high');
     flagpole.scale.setScalar(1.6);
-    flagpole.position.set(0, 1.6, 0);
+    flagpole.position.set(0, 2.3, 0);
     group.add(flagpole);
     this._centralFlagMesh = flagpole;
 
-    // Palms providing tactical broadside cover
+    // Palms firmly rooted in island ground
     const palmCoords = [
-      [-12, -12], [12, -12], [-12, 12], [12, 12],
-      [-18, 0], [18, 0], [0, -18], [0, 18]
+      [-10, -10], [10, -10], [-10, 10], [10, 10],
+      [-16, 0], [16, 0], [0, -16]
     ];
     for (const [x, z] of palmCoords) {
       const palm = AssetLoader.get(Math.random() > 0.5 ? 'palm-straight' : 'palm-bend');
       palm.scale.setScalar(randRange(1.1, 1.5));
-      palm.position.set(x, 1.4, z);
+      palm.position.set(x, 2.0, z);
       group.add(palm);
     }
 
-    // Rugged rock formations around perimeter for naval maneuvering
+    // Rugged rock formations around perimeter shoreline
     const rockCoords = [
-      [-26, -18, 'rocks-a'], [26, 18, 'rocks-a'],
-      [-22, 22, 'rocks-b'], [22, -22, 'rocks-c']
+      [-23, -15, 'rocks-a'], [23, 15, 'rocks-a'],
+      [-19, 19, 'rocks-b'], [19, -19, 'rocks-c'],
+      [-24, 0, 'rocks-sand-a'], [24, 0, 'rocks-sand-a']
     ];
     for (const [rx, rz, key] of rockCoords) {
       const r = AssetLoader.get(key);
       r.scale.setScalar(2.2);
-      r.position.set(rx, 0, rz);
+      r.position.set(rx, 0.7, rz);
       group.add(r);
     }
 
-    // Glowing Water Ring for the Capture Zone (radius 50)
+    // Glowing Water Ring for the Capture Zone (radius 50 in surrounding waters)
     const ringGeo = new THREE.RingGeometry(this.flagRadius - 2.5, this.flagRadius + 1.5, 64);
     const ringMat = new THREE.MeshBasicMaterial({
       color: 0xd8c49a, // neutral parchment
@@ -342,6 +445,33 @@ export class TeamBattleSystem {
     }
     this._defenseCannons.length = 0;
     this.active = false;
+
+    // Clear countdown timer if active
+    if (this._countdownInterval) {
+      clearInterval(this._countdownInterval);
+      this._countdownInterval = null;
+    }
+
+    // Clear pending respawns
+    this._respawnQueue.clear();
+    this.game.hud?.hideRespawnCountdown();
+
+    // Clean up participant bot ships from ShipSystem and scene
+    if (this.participants && this.participants.length > 0) {
+      for (const p of this.participants) {
+        if (p.id !== 'local_player' && p.ship) {
+          this.game.ships?.unregisterShip(p.ship);
+          if (p.ship.group) this.scene.remove(p.ship.group);
+          p.ship = null;
+        }
+      }
+      this.participants = [];
+    }
+
+    // Restore sandbox islands for Solo Voyage
+    if (this.game?._islands) {
+      this.game.ships?.setIslands(this.game._islands);
+    }
   }
 
   // ── PARTICIPANTS & ROSTER MANAGEMENT ────────────────────────────────────────
@@ -465,6 +595,34 @@ export class TeamBattleSystem {
     }
   }
 
+  /**
+   * Seamlessly assign mid-match connecting player to an active bot slot.
+   * @param {string} peerId
+   * @param {string} [peerName]
+   */
+  handlePeerConnect(peerId, peerName) {
+    if (!this.active) return;
+    let existing = this.participants.find(p => p.id === peerId);
+    if (existing) {
+      existing.isBot = false;
+      return;
+    }
+
+    const bot = this.participants.find(p => p.isBot && p.team === Team.BLACK_TIDE)
+      || this.participants.find(p => p.isBot);
+
+    if (bot) {
+      bot.id = peerId;
+      bot.name = peerName || `Captain ${peerId.slice(-4).toUpperCase()}`;
+      bot.isBot = false;
+      if (bot.ship) {
+        bot.ship._isPartnerGhost = true;
+      }
+      this.game.hud?.showTeamBattleAnnouncement(`⚔️ Captain ${bot.name} has joined the battle!`, 'success');
+      this.game.hud?.toast(`⚔️ ${bot.name} joined the fleet!`, 'success');
+    }
+  }
+
   // ── SPAWNING & LIFECYCLE ─────────────────────────────────────────────────────
 
   /**
@@ -491,6 +649,13 @@ export class TeamBattleSystem {
         ship.health = ship.maxHealth;
         ship.velocity.set(0, 0, 0);
         ship.team = p.team;
+        ship.state = 'SAILING';
+        ship._sinkTimer = 0;
+        this.game.ships?.registerShip(ship);
+        if (ship.group) {
+          if (!ship.group.parent) this.game.scene.add(ship.group);
+          ship.group.visible = true;
+        }
         p.ship = ship;
         this._applyTeamVisuals(ship, p.team);
       } else if (p.id === 'peer_partner' && this.game._partnerShip) {
@@ -554,12 +719,14 @@ export class TeamBattleSystem {
     this.game.hud?.showTeamBattleAnnouncement('⚔️ PIRATE TEAM BATTLE — PREPARE BROADSIDES!', 'gold');
 
     let count = 5;
-    const interval = setInterval(() => {
+    if (this._countdownInterval) clearInterval(this._countdownInterval);
+    this._countdownInterval = setInterval(() => {
       count--;
       if (count > 0) {
         EventEmitter.emit('teambattle:countdown', { seconds: count });
       } else {
-        clearInterval(interval);
+        clearInterval(this._countdownInterval);
+        this._countdownInterval = null;
         this.startMatch();
       }
     }, 1000);
@@ -631,9 +798,11 @@ export class TeamBattleSystem {
     EventEmitter.emit('camera:shake', { intensity: 1.0, duration: 0.6 });
 
     EventEmitter.emit('teambattle:victory', { winningTeam, reason });
+    this.game.hud?.hideRespawnCountdown();
     this.game.hud?.showTeamBattleAnnouncement(`🏆 ${teamName.toUpperCase()} VICTORY!`, 'gold');
     if (this.game.mp?.isHost) {
       this.game.mp.sendTeamBattleState?.(this.getState());
+      this.game.matchmaking?.setRoomStatus(this.game.matchmaking?.currentRoomCode, 'closed');
     }
 
     setTimeout(() => {
@@ -655,9 +824,11 @@ export class TeamBattleSystem {
   _triggerDraw() {
     this.matchState = MatchState.DRAW;
     EventEmitter.emit('teambattle:draw');
+    this.game.hud?.hideRespawnCountdown();
     this.game.hud?.showTeamBattleAnnouncement('⚖️ HONOURABLE DRAW — HIGH SEAS STALEMATE!', 'info');
     if (this.game.mp?.isHost) {
       this.game.mp.sendTeamBattleState?.(this.getState());
+      this.game.matchmaking?.setRoomStatus(this.game.matchmaking?.currentRoomCode, 'closed');
     }
 
     setTimeout(() => {
@@ -911,12 +1082,16 @@ export class TeamBattleSystem {
         }
       }
 
-      // Objective Priority:
-      // If enemy ship close (< 65m) -> broadside attack!
-      // Else if flag is not owned by our team -> sail to central flag!
-      // Else -> sail toward enemy fortress to bombard it!
+      // Objective Priority with Tactical Fleet Commands:
       let targetPos;
-      if (closestTarget && closestDist < 65) {
+      const cmd = this._fleetCommand;
+      if (cmd === 'FLAG') {
+        targetPos = new THREE.Vector3(0, 0, 0);
+      } else if (cmd === 'FORTRESS') {
+        targetPos = enemyFortPos;
+      } else if (cmd === 'DEFEND') {
+        targetPos = TeamConfig[myTeam].islandPos;
+      } else if (closestTarget && closestDist < 65) {
         targetPos = closestTarget.group.position;
       } else if (this.flagOwner !== myTeam) {
         targetPos = new THREE.Vector3(0, 0, 0);
@@ -944,6 +1119,16 @@ export class TeamBattleSystem {
     }
   }
 
+  /**
+   * Order ally fleet ships to focus on an objective.
+   * @param {'FLAG' | 'FORTRESS' | 'DEFEND'} cmd
+   */
+  commandFleet(cmd) {
+    this._fleetCommand = cmd;
+    const msg = cmd === 'FLAG' ? 'Capture Central Flag' : cmd === 'FORTRESS' ? 'Bombard Enemy Fortress' : 'Defend Home Dock';
+    this.game.hud?.toast(`🚩 Fleet Command: ${msg}!`, 'info');
+  }
+
   // ── RESPAWNING ───────────────────────────────────────────────────────────────
 
   /**
@@ -959,14 +1144,21 @@ export class TeamBattleSystem {
         this._respawnQueue.set(p.id, { timer: 8.0, participant: p });
         if (p.id === 'local_player') {
           this.game.hud?.showTeamBattleAnnouncement('⚓ SHIP SUNK! RESPAWNING IN 8 SECONDS...', 'danger');
+          this.game.hud?.showRespawnCountdown(8.0);
         }
       }
     }
 
     for (const [id, entry] of this._respawnQueue) {
       entry.timer -= delta;
+      if (id === 'local_player') {
+        this.game.hud?.updateRespawnCountdown(entry.timer);
+      }
       if (entry.timer <= 0) {
         this._respawnQueue.delete(id);
+        if (id === 'local_player') {
+          this.game.hud?.hideRespawnCountdown();
+        }
         this._respawnParticipant(entry.participant);
       }
     }
@@ -976,27 +1168,54 @@ export class TeamBattleSystem {
     if (this.matchState !== MatchState.IN_PROGRESS && this.matchState !== MatchState.COUNTDOWN) return;
     const cfg = TeamConfig[p.team];
     const spawnX = cfg.dockPos.x;
-    const spawnZ = cfg.dockPos.z + randRange(-20, 20);
+    const spawnZ = cfg.dockPos.z + randRange(-15, 15);
 
     const ship = p.ship;
     if (ship) {
-      if (ship.group && !this.game.scene.children.includes(ship.group)) {
-        this.game.scene.add(ship.group);
-      }
+      // 1. Ensure ship is re-registered into ShipSystem so its update() loop ticks every frame
+      this.game.ships?.registerShip(ship);
+
+      // 2. Ensure ship group is attached to scene, visible, and oriented properly
       if (ship.group) {
-        ship.group.rotation.x = 0;
-        ship.group.rotation.z = 0;
+        if (!ship.group.parent) {
+          this.game.scene.add(ship.group);
+        }
+        ship.group.visible = true;
+        ship.group.rotation.set(0, cfg.facingRad, 0);
+        ship.group.position.set(spawnX, 1.0, spawnZ);
       }
+
+      // 3. Reset physics, health, timers, and state to SAILING
       ship._sinkTimer = 0;
-      ship.setPosition(spawnX, 1.0, spawnZ);
-      ship.setRotationY(cfg.facingRad);
+      ship._sinkShakeTimer = 0;
+      ship._chainSlowTimer = 0;
+      ship._burnTimer = 0;
+      ship._burnDPS = 0;
+      ship._veynarSlowTimer = 0;
       ship.health = ship.maxHealth;
       ship.state = 'SAILING';
+      ship.thrust = 0;
+      ship.steering = 0;
       ship.velocity.set(0, 0, 0);
+      ship.angularVelocity = 0;
+      ship.isDrifting = false;
       ship.cannonCooldown = 1.0;
+
+      // 4. Team visuals
       this._applyTeamVisuals(ship, p.team);
-      if (p.id === 'local_player' && this.game.cameraSystem) {
-        this.game.cameraSystem.setTarget(ship.group);
+
+      // 5. If this is the local player, restore playerShip pointer, camera, input, and HUD
+      if (p.id === 'local_player') {
+        this.game.playerShip = ship;
+        this.game.input?.clear();
+        if (this.game.cameraSystem) {
+          this.game.cameraSystem.setTarget(ship.group);
+          this.game.cameraSystem.clearFocus();
+          this.game.cameraSystem._cinematicMode = false;
+        }
+        if (this.game.hud) {
+          this.game.hud.updateShipInfo(ship, 1, 0);
+        }
       }
     }
 
@@ -1027,6 +1246,16 @@ export class TeamBattleSystem {
         // Client: handle local player respawn loop locally
         this._updateLocalRespawn(delta);
       }
+      if (this._dockRepairActive) {
+        const localP = this.participants.find(p => p.id === 'local_player');
+        if (localP?.ship?.isAlive && localP.ship.health < localP.ship.maxHealth) {
+          const dockPos = TeamConfig[localP.team].dockPos;
+          const d = dist2D(localP.ship.group.position, dockPos);
+          if (d < 45) {
+            localP.ship.health = Math.min(localP.ship.maxHealth, localP.ship.health + delta * 12);
+          }
+        }
+      }
     }
 
     // Update In-Game Team Battle HUD
@@ -1046,13 +1275,16 @@ export class TeamBattleSystem {
     if ((!ship.isAlive || ship.health <= 0 || ship.state === 'SUNK' || ship.state === 'SINKING') && !this._respawnQueue.has('local_player')) {
       this._respawnQueue.set('local_player', { timer: 8.0, participant: localP });
       this.game.hud?.showTeamBattleAnnouncement('⚓ SHIP SUNK! RESPAWNING IN 8 SECONDS...', 'danger');
+      this.game.hud?.showRespawnCountdown(8.0);
     }
 
     const entry = this._respawnQueue.get('local_player');
     if (entry) {
       entry.timer -= delta;
+      this.game.hud?.updateRespawnCountdown(entry.timer);
       if (entry.timer <= 0) {
         this._respawnQueue.delete('local_player');
+        this.game.hud?.hideRespawnCountdown();
         this._respawnParticipant(entry.participant);
       }
     }
@@ -1074,6 +1306,31 @@ export class TeamBattleSystem {
       flagProgress: this.flagProgress,
       isContested: this.isContested,
       matchState: this.matchState,
+      dayPhase: this.game.sky?._dayPhase ?? 0,
+      participants: this.participants.map(p => ({
+        id: p.id,
+        name: p.name,
+        team: p.team,
+        isBot: p.isBot,
+        isHost: p.isHost,
+        shipClass: p.shipClass,
+        x: p.ship?.group?.position?.x ?? 0,
+        y: p.ship?.group?.position?.y ?? 1.0,
+        z: p.ship?.group?.position?.z ?? 0,
+        ry: p.ship?.group?.rotation?.y ?? 0,
+        vx: p.ship?.velocity?.x ?? 0,
+        vy: p.ship?.velocity?.y ?? 0,
+        vz: p.ship?.velocity?.z ?? 0,
+        hp: p.ship?.health ?? 0,
+        mhp: p.ship?.maxHealth ?? 120,
+        state: p.ship?.state ?? 'SAILING',
+        thrust: p.ship?.thrust ?? 0,
+        steering: p.ship?.steering ?? 0,
+      })),
+      respawns: Array.from(this._respawnQueue.entries()).map(([id, entry]) => ({
+        id,
+        timer: entry.timer,
+      })),
     };
   }
 
@@ -1091,6 +1348,91 @@ export class TeamBattleSystem {
     if (state.flagOwner !== undefined) this.flagOwner = state.flagOwner;
     if (state.flagProgress !== undefined) this.flagProgress = state.flagProgress;
     if (state.isContested !== undefined) this.isContested = state.isContested;
+
+    // Synchronize authoritative Day/Night cycle
+    if (state.dayPhase !== undefined && this.game.sky?.setDayPhase) {
+      this.game.sky.setDayPhase(state.dayPhase);
+    }
+
+    // Reconcile and interpolate all participants (bots and players)
+    if (Array.isArray(state.participants)) {
+      for (const pData of state.participants) {
+        let localP = this.participants.find(p => p.id === pData.id);
+        if (!localP && !this.game.mp?.isHost) {
+          if (pData.isHost) {
+            localP = this.participants.find(p => p.id === 'peer_partner' || p.isHost);
+          }
+        }
+        if (!localP || !localP.ship) continue;
+
+        const ship = localP.ship;
+
+        if (localP.id === 'local_player') {
+          // Client owns local ship physics, but reconciles authoritative health and sinking
+          if (pData.hp <= 0 && ship.state !== 'SUNK' && ship.state !== 'SINKING') {
+            ship.takeDamage(ship.health);
+          } else if (pData.hp > 0 && (ship.state === 'SUNK' || ship.state === 'SINKING')) {
+            // Respawned by host
+            ship.state = 'SAILING';
+            ship._sinkTimer = 0;
+            ship.health = pData.hp;
+            ship.maxHealth = pData.mhp;
+            ship.setPosition(pData.x, pData.y, pData.z);
+            ship.setRotationY(pData.ry);
+            this.game.ships?.registerShip(ship);
+            if (ship.group) {
+              if (!ship.group.parent) this.game.scene.add(ship.group);
+              ship.group.visible = true;
+            }
+          }
+        } else {
+          // Remote participant or AI bot
+          if (ship.group && !ship.group.parent) {
+            this.game.scene.add(ship.group);
+          }
+          if (ship.group) ship.group.visible = true;
+
+          if (pData.hp > 0 && (ship.state === 'SUNK' || ship.state === 'SINKING')) {
+            ship.state = 'SAILING';
+            ship._sinkTimer = 0;
+            this.game.ships?.registerShip(ship);
+          } else if (pData.hp <= 0 && ship.state === 'SAILING') {
+            ship.state = 'SUNK';
+          }
+
+          // Positional interpolation with teleport threshold
+          const curPos = ship.group.position;
+          const distSq = (curPos.x - pData.x) ** 2 + (curPos.z - pData.z) ** 2;
+          if (distSq > 400) {
+            ship.setPosition(pData.x, pData.y, pData.z);
+            ship.setRotationY(pData.ry);
+          } else {
+            curPos.x += (pData.x - curPos.x) * 0.45;
+            curPos.y = pData.y;
+            curPos.z += (pData.z - curPos.z) * 0.45;
+            const diff = ((pData.ry - ship.group.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+            ship.group.rotation.y += diff * 0.45;
+          }
+
+          ship.velocity?.set(pData.vx, pData.vy, pData.vz);
+          ship.health = pData.hp;
+          ship.maxHealth = pData.mhp;
+          ship.thrust = pData.thrust;
+          ship.steering = pData.steering;
+        }
+      }
+    }
+
+    // Synchronize authoritative respawn countdown
+    if (Array.isArray(state.respawns)) {
+      const myRespawn = state.respawns.find(r => r.id === (this.game.mp?.myPeerId || 'local_player'));
+      if (myRespawn && myRespawn.timer > 0) {
+        this.game.hud?.showRespawnCountdown(myRespawn.timer);
+      } else if (!myRespawn && this._respawnQueue.has('local_player')) {
+        this.game.hud?.hideRespawnCountdown();
+      }
+    }
+
     if (state.matchState !== undefined && this.matchState !== state.matchState) {
       this.matchState = state.matchState;
       if (this.matchState === MatchState.IN_PROGRESS) {

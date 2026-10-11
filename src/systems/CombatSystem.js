@@ -57,35 +57,151 @@ const AMMO_ORDER = [AmmoType.ROUND, AmmoType.CHAIN, AmmoType.FIRE];
 
 // ─── MUZZLE FLASH ─────────────────────────────────────────────────────────────
 class MuzzleFlash {
-  static _geo = null;
-  static _mat = null;
+  static _coreGeo = null;
+  static _outerGeo = null;
+  static _coreMat = null;
+  static _outerMat = null;
 
-  constructor(scene, position) {
-    if (!MuzzleFlash._geo) {
-      MuzzleFlash._geo = new THREE.SphereGeometry(0.8, 6, 6);
-      MuzzleFlash._mat = new THREE.MeshBasicMaterial({
-        color: 0xffdd44,
+  constructor(scene, position, direction = null) {
+    if (!MuzzleFlash._coreGeo) {
+      MuzzleFlash._coreGeo = new THREE.SphereGeometry(0.7, 7, 7);
+      MuzzleFlash._outerGeo = new THREE.SphereGeometry(1.6, 7, 7);
+      MuzzleFlash._coreMat = new THREE.MeshBasicMaterial({
+        color: 0xfffaee,
+        transparent: true,
+        depthWrite: false,
+      });
+      MuzzleFlash._outerMat = new THREE.MeshBasicMaterial({
+        color: 0xff6611,
         transparent: true,
         depthWrite: false,
       });
     }
-    this.age      = 0;
-    this.lifetime = 0.12;
-    this.scene    = scene;
-    this.mesh     = new THREE.Mesh(MuzzleFlash._geo, MuzzleFlash._mat.clone());
-    this.mesh.position.copy(position);
-    scene.add(this.mesh);
+
+    this.age = 0;
+    this.lifetime = 0.16;
+    this.scene = scene;
+
+    this.group = new THREE.Group();
+    this.group.position.copy(position);
+
+    this.coreMesh = new THREE.Mesh(MuzzleFlash._coreGeo, MuzzleFlash._coreMat.clone());
+    this.outerMesh = new THREE.Mesh(MuzzleFlash._outerGeo, MuzzleFlash._outerMat.clone());
+    this.group.add(this.coreMesh);
+    this.group.add(this.outerMesh);
+
+    // Directional recoil impulse
+    this._vel = direction ? direction.clone().normalize().multiplyScalar(4.0) : new THREE.Vector3();
+
+    // Brief dynamic point light flash illuminating ship hull & ocean surface
+    this.light = new THREE.PointLight(0xffaa33, 4.5, 22);
+    this.light.position.copy(position);
+    this.light.castShadow = false;
+
+    scene.add(this.group);
+    scene.add(this.light);
   }
 
   update(delta) {
     this.age += delta;
     const t = this.age / this.lifetime;
-    this.mesh.scale.setScalar(1 + t * 3);
-    this.mesh.material.opacity = 1 - t;
+
+    this.group.position.addScaledVector(this._vel, delta);
+    this.coreMesh.scale.setScalar(1 + t * 2.2);
+    this.outerMesh.scale.setScalar(1 + t * 4.0);
+
+    const fade = Math.max(0, 1 - t);
+    this.coreMesh.material.opacity = fade * 0.95;
+    this.outerMesh.material.opacity = fade * 0.75;
+
+    if (this.light) {
+      this.light.intensity = Math.max(0, 4.5 * (1 - t * 2.5));
+    }
   }
 
   get dead() { return this.age >= this.lifetime; }
-  dispose()  { this.scene.remove(this.mesh); }
+
+  dispose() {
+    this.scene.remove(this.group);
+    this.coreMesh?.material?.dispose();
+    this.outerMesh?.material?.dispose();
+    if (this.light) {
+      this.scene.remove(this.light);
+      this.light = null;
+    }
+  }
+}
+
+// ─── WOODEN SPLINTER BURST ──────────────────────────────────────────────────
+class SplinterBurst {
+  static _geo = null;
+  static _mats = null;
+
+  constructor(scene, position) {
+    if (!SplinterBurst._geo) {
+      SplinterBurst._geo = new THREE.BoxGeometry(0.12, 0.48, 0.09);
+      SplinterBurst._mats = [
+        new THREE.MeshLambertMaterial({ color: 0x5c381e }),
+        new THREE.MeshLambertMaterial({ color: 0x7c4e28 }),
+        new THREE.MeshLambertMaterial({ color: 0x3d2412 }),
+        new THREE.MeshLambertMaterial({ color: 0x946132 }),
+      ];
+    }
+
+    this.scene = scene;
+    this.age = 0;
+    this.lifetime = 0.85;
+    this._splinters = [];
+
+    const count = 9;
+    for (let i = 0; i < count; i++) {
+      const mat = SplinterBurst._mats[i % SplinterBurst._mats.length];
+      const mesh = new THREE.Mesh(SplinterBurst._geo, mat);
+      mesh.position.copy(position);
+      mesh.position.x += (Math.random() - 0.5) * 0.8;
+      mesh.position.y += (Math.random() - 0.5) * 0.8;
+      mesh.position.z += (Math.random() - 0.5) * 0.8;
+
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 5.0 + Math.random() * 8.5;
+      mesh._vel = new THREE.Vector3(
+        Math.cos(angle) * speed,
+        4.0 + Math.random() * 7.0,
+        Math.sin(angle) * speed,
+      );
+      mesh._rotVel = new THREE.Vector3(
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+        (Math.random() - 0.5) * 14,
+      );
+
+      scene.add(mesh);
+      this._splinters.push(mesh);
+    }
+  }
+
+  update(delta) {
+    this.age += delta;
+    const t = this.age / this.lifetime;
+
+    for (const s of this._splinters) {
+      s._vel.y -= 18 * delta; // gravity
+      s.position.addScaledVector(s._vel, delta);
+      s.rotation.x += s._rotVel.x * delta;
+      s.rotation.y += s._rotVel.y * delta;
+      s.rotation.z += s._rotVel.z * delta;
+      s.scale.setScalar(Math.max(0.1, 1 - t * 0.5));
+    }
+  }
+
+  get dead() { return this.age >= this.lifetime; }
+
+  dispose() {
+    for (const s of this._splinters) {
+      this.scene.remove(s);
+    }
+    this._splinters.length = 0;
+  }
 }
 
 // ─── WATER SPLASH ───────────────────────────────────────────────────────────
@@ -564,7 +680,10 @@ class SmokeParticle {
 
   get dead() { return this.age >= this.lifetime; }
 
-  dispose() { this.scene.remove(this.mesh); }
+  dispose() {
+    this.scene.remove(this.mesh);
+    this.mesh?.material?.dispose();
+  }
 }
 
 // ─── COMBAT SYSTEM ─────────────────────────────────────────────────────────────
@@ -648,6 +767,18 @@ export class CombatSystem {
       </div>
     `;
     document.body.appendChild(container);
+  }
+
+  get currentAmmoType() {
+    return this.currentAmmo;
+  }
+
+  /**
+   * Alias for setAmmo to explicitly set selected ammunition type.
+   * @param {string} type 
+   */
+  setAmmoType(type) {
+    this.setAmmo(type);
   }
 
   /**
@@ -774,28 +905,31 @@ export class CombatSystem {
       }
     }
 
-    // Muzzle smoke — color-tinted for fire shot / cursed spectral shot
-    if (ammo === AmmoType.FIRE) {
-      this._spawnColorSmoke(base, 4, 0xff4400);
-    } else if (ammo === AmmoType.CURSED_SPECTRAL) {
-      this._spawnColorSmoke(base, 6, 0x00ffcc);
-    } else {
-      this._spawnSmoke(base, 6);
-    }
-
-    // Muzzle flash on each firing cannon
+    // Muzzle flash on each firing cannon with recoil direction
     const flashL = base.clone().addScaledVector(right, -2.5);
     const flashR = base.clone().addScaledVector(right,  2.5);
-    if (actualFirePort) this._flashes.push(new MuzzleFlash(this._scene, flashL));
-    if (actualFireStarboard) this._flashes.push(new MuzzleFlash(this._scene, flashR));
+    const dirL = right.clone().multiplyScalar(-1);
+    const dirR = right.clone();
 
-    EventEmitter.emit('combat:fired', { ship, ammo });
-    if (ship.faction === 'PLAYER') {
-      EventEmitter.emit('camera:shake', { intensity: 0.45, duration: 0.22 });
+    if (actualFirePort) {
+      this._flashes.push(new MuzzleFlash(this._scene, flashL, dirL));
+      this._spawnGunportSmoke(flashL, dirL, ammo);
+    }
+    if (actualFireStarboard) {
+      this._flashes.push(new MuzzleFlash(this._scene, flashR, dirR));
+      this._spawnGunportSmoke(flashR, dirR, ammo);
     }
 
-    // Multiplayer broadcast of player cannon fire
-    if (window.__game?.mp?.connected && ship === window.__game?.playerShip) {
+    EventEmitter.emit('combat:fired', { ship, ammo });
+    if (ship.faction === 'PLAYER' || ship === window.__game?.playerShip) {
+      EventEmitter.emit('camera:shake', {
+        intensity: GameConfig.CANNON_FIRE_SHAKE_INTENSITY ?? 0.52,
+        duration: GameConfig.CANNON_FIRE_SHAKE_DURATION ?? 0.22,
+      });
+    }
+
+    // Multiplayer broadcast of player / bot cannon fire
+    if (window.__game?.mp?.connected && (ship === window.__game?.playerShip || (window.__game?.mp?.isHost && ship?.team))) {
       const posL = actualFirePort ? base.clone().addScaledVector(right, -2.5) : new THREE.Vector3();
       const velL = actualFirePort ? right.clone().multiplyScalar(-speed).addScaledVector(ship.velocity, 0.5) : new THREE.Vector3();
       const posR = actualFireStarboard ? base.clone().addScaledVector(right, 2.5) : new THREE.Vector3();
@@ -877,8 +1011,31 @@ export class CombatSystem {
     EventEmitter.emit('camera:shake', { intensity: 0.8, duration: 0.4 });
   }
 
+  /** Spawn lightweight wooden splinter particles when a ship takes impact. */
+  spawnSplinters(position) {
+    this._impactFX.push(new SplinterBurst(this._scene, position.clone()));
+  }
+
   _spawn(position, velocity, owner, ammoType) {
     this._balls.push(new Cannonball(this._scene, position, velocity, owner, ammoType));
+  }
+
+  _spawnGunportSmoke(position, direction, ammo) {
+    const count = 4;
+    const color = (ammo === AmmoType.FIRE) ? 0xff4400 : (ammo === AmmoType.CURSED_SPECTRAL) ? 0x00ffcc : 0x777777;
+    for (let i = 0; i < count; i++) {
+      const p = new SmokeParticle(this._scene, position.clone());
+      if (p.mesh && p.mesh.material) {
+        p.mesh.material.color.setHex(color);
+      }
+      const spreadX = (Math.random() - 0.5) * 1.5;
+      const spreadZ = (Math.random() - 0.5) * 1.5;
+      p._vel = direction.clone().multiplyScalar(4 + Math.random() * 4);
+      p._vel.x += spreadX;
+      p._vel.y = 1.0 + Math.random() * 2.5;
+      p._vel.z += spreadZ;
+      this._smoke.push(p);
+    }
   }
 
   _spawnSmoke(position, count) {
@@ -974,14 +1131,20 @@ export class CombatSystem {
             const isKill = ship.health <= 0;
             const isCrit = actualDmg >= 24 || isRake;
             EventEmitter.emit('combat:hitmarker', { isKill, isCrit, isRake, damage: actualDmg });
-            EventEmitter.emit('camera:shake', { intensity: isKill ? 0.45 : isRake ? 0.35 : 0.22, duration: 0.18 });
+            EventEmitter.emit('camera:shake', { intensity: isKill ? 0.48 : isRake ? 0.38 : 0.25, duration: 0.20 });
             if (isRake) {
               window.__game?.hud?.toast(`💥 CRITICAL RAKE! ${isSternHit ? 'Stern' : 'Bow'} shattered! -${actualDmg}`, 'gold');
             }
           } else if (ship.faction === 'PLAYER' || ship === window.__game?.playerShip) {
-            // Player ship took damage from enemy cannon fire!
-            EventEmitter.emit('camera:shake', { intensity: 0.35, duration: 0.22 });
+            // Player ship took damage from enemy cannon fire — heavy visceral impact shake
+            EventEmitter.emit('camera:shake', {
+              intensity: GameConfig.PLAYER_HIT_SHAKE_INTENSITY ?? 0.70,
+              duration: GameConfig.PLAYER_HIT_SHAKE_DURATION ?? 0.35,
+            });
           }
+
+          // Always spawn wooden splinters when a cannonball strikes any ship hull
+          this._impactFX.push(new SplinterBurst(this._scene, ball.mesh.position.clone()));
 
           // Knockback impulse — push ship away from impact point
           if (ship.isSailing) {

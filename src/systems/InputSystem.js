@@ -80,6 +80,13 @@ export class InputSystem {
     this._justReleased.clear();
   }
 
+  /** Clear all held and frame keys (useful on respawn / state reset). */
+  clear() {
+    this._keys.clear();
+    this._justPressed.clear();
+    this._justReleased.clear();
+  }
+
   destroy() {
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup',   this._onKeyUp);

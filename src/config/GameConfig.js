@@ -41,6 +41,12 @@ export const GameConfig = {
   SHIP_COLLISION_RADIUS: 5,     // bounding sphere for cannonball hits
   SINKING_DURATION: 6,          // seconds a ship takes to sink
 
+  // ── Combat Feedback ───────────────────────────────────
+  CANNON_FIRE_SHAKE_INTENSITY: 0.52,
+  CANNON_FIRE_SHAKE_DURATION: 0.22,
+  PLAYER_HIT_SHAKE_INTENSITY: 0.70,
+  PLAYER_HIT_SHAKE_DURATION: 0.35,
+
   // ── AI ────────────────────────────────────────────────
   AI_PATROL_SPEED_FACTOR: 0.55,  // fraction of max speed while patrolling
   AI_CHASE_SPEED_FACTOR: 0.85,
