@@ -272,7 +272,12 @@ export class SkySystem {
    */
   setDayPhase(val) {
     if (typeof val === 'number' && !isNaN(val)) {
-      this._dayPhase = val;
+      const diff = val - this._dayPhase;
+      if (Math.abs(diff) > 0.05) {
+        this._dayPhase = val;
+      } else {
+        this._dayPhase += diff * 0.15;
+      }
     }
   }
 }

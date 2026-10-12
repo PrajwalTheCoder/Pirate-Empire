@@ -1115,27 +1115,38 @@ export class CombatSystem {
           const isClientPlayerHit = this.onPlayerHitEnemy
             && (ball.owner.faction === 'PLAYER' || ball.owner === window.__game?.playerShip)
             && ship !== ball.owner;
+
           let actualDmg = 0;
           if (isClientPlayerHit && window.__game?.mp?.isClient) {
-            // Let the callback suppress local damage (returns true = handled by network)
-            this.onPlayerHitEnemy(ship, baseDamage);
-            actualDmg = Math.round(baseDamage);
+            // Forward hit request to host — suppress local authoritative health mutation & hitmarker
+            this.onPlayerHitEnemy(ship, baseDamage, ball.ammoType ?? AmmoType.ROUND);
           } else {
+            // Host or Single-Player: Authoritative damage commit
             actualDmg = ship.takeDamage(baseDamage);
-          }
-
-          // Player landed a hit on an enemy — trigger visual hitmarker & camera impact shake
-          const isLocalShooter = ball.owner.faction === 'PLAYER' || ball.owner === window.__game?.playerShip;
-          const isOpponent = ship !== ball.owner && (ship.faction !== 'PLAYER' || (ship.team && ship.team !== ball.owner.team));
-          if (isLocalShooter && isOpponent) {
             const isKill = ship.health <= 0;
             const isCrit = actualDmg >= 24 || isRake;
-            EventEmitter.emit('combat:hitmarker', { isKill, isCrit, isRake, damage: actualDmg });
-            EventEmitter.emit('camera:shake', { intensity: isKill ? 0.48 : isRake ? 0.38 : 0.25, duration: 0.20 });
-            if (isRake) {
-              window.__game?.hud?.toast(`💥 CRITICAL RAKE! ${isSternHit ? 'Stern' : 'Bow'} shattered! -${actualDmg}`, 'gold');
+
+            // Broadcast authoritative damage commit to peers if in multiplayer
+            if (window.__game?.mp?.connected && window.__game?.mp?.isHost) {
+              window.__game.mp.sendDamageEvent(ship.id, actualDmg, ship.health, isKill, isCrit);
+              if (isKill) {
+                window.__game.mp.sendShipDestroyed(ship.id, ship.lifecycleGen || 1, 8.0);
+              }
             }
-          } else if (ship.faction === 'PLAYER' || ship === window.__game?.playerShip) {
+
+            // Local shooter feedback
+            const isLocalShooter = ball.owner.faction === 'PLAYER' || ball.owner === window.__game?.playerShip;
+            const isOpponent = ship !== ball.owner && (ship.faction !== 'PLAYER' || (ship.team && ship.team !== ball.owner.team));
+            if (isLocalShooter && isOpponent) {
+              EventEmitter.emit('combat:hitmarker', { isKill, isCrit, isRake, damage: actualDmg });
+              EventEmitter.emit('camera:shake', { intensity: isKill ? 0.48 : isRake ? 0.38 : 0.25, duration: 0.20 });
+              if (isRake) {
+                window.__game?.hud?.toast(`💥 CRITICAL RAKE! ${isSternHit ? 'Stern' : 'Bow'} shattered! -${actualDmg}`, 'gold');
+              }
+            }
+          }
+
+          if (ship.faction === 'PLAYER' || ship === window.__game?.playerShip) {
             // Player ship took damage from enemy cannon fire — heavy visceral impact shake
             EventEmitter.emit('camera:shake', {
               intensity: GameConfig.PLAYER_HIT_SHAKE_INTENSITY ?? 0.70,

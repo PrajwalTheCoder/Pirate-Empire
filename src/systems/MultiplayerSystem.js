@@ -28,6 +28,8 @@
 
 import EventEmitter from '../utils/EventEmitter.js';
 import * as NetPacker from '../utils/NetPacker.js';
+import { EntityInterpolationBuffer } from '../utils/EntityInterpolationBuffer.js';
+import { NetworkDiagnostics } from './NetworkDiagnostics.js';
 
 // ── Protocol version ─────────────────────────────────────────────────────────
 // Increment when the binary packet layout changes so incompatible clients
@@ -121,6 +123,20 @@ export class MultiplayerSystem {
     // Multi-peer state map (peerId -> latest state)
     this.peerStates = new Map();
 
+    // Authoritative sequencing & event tracking (v3 protocol)
+    this._localShipSeq     = 0;
+    this._localShipGen     = 1;
+    this._authoritativeTick = 0;
+    this._hostEventSeq     = 0;
+    this._processedEventIds = new Set();
+
+    // Interpolation buffers
+    this._partnerInterpBuffer = new EntityInterpolationBuffer();
+    this._interpBuffers = new Map(); // peerId -> EntityInterpolationBuffer
+
+    // Network Diagnostics & Latency Measurement
+    this.diagnostics = new NetworkDiagnostics(this);
+
     // Callbacks set by Game
     this.onConnected        = null;   // () => void
     this.onDisconnected     = null;   // () => void
@@ -128,6 +144,8 @@ export class MultiplayerSystem {
     this.onPeerShipState    = null;   // (peerId, state) => void
     this.onCannonFire       = null;   // (data) => void
     this.onDamageEvent      = null;   // (data) => void
+    this.onShipDestroyed    = null;   // (data) => void
+    this.onShipRespawned    = null;   // (data) => void
     this.onPerkPickup       = null;   // (data) => void
     this.onPingMap          = null;   // (data) => void
     this.onFlare            = null;   // () => void
@@ -137,13 +155,53 @@ export class MultiplayerSystem {
     this.onWorldEvent       = null;   // (text) => void
     this.onSyncWorld        = null;   // (snapshot) => void
     this.onAIState          = null;   // (stateArray) => void  — client receives enemy positions
-    this.onDamageRequest    = null;   // ({id, dmg}) => void   — host receives hit request
+    this.onDamageRequest    = null;   // ({id, dmg, requestId, ammo}) => void — host receives hit request
     this.onWorldLayout      = null;   // (layoutData) => void  — client receives island/loot layout
     this.onWorldLayoutAck   = null;   // () => void            — host receives client ACK for world layout
     this.onTeamBattleIslandHit = null; // (data) => void       — host receives fortress damage from client
 
     // Version mismatch flag — set when partner runs an incompatible protocol version
     this._versionMismatch = false;
+  }
+
+  getPrimaryInterpolationBuffer() {
+    return this._partnerInterpBuffer;
+  }
+
+  getInterpolationBuffer(peerId) {
+    if (!peerId) return this._partnerInterpBuffer;
+    if (!this._interpBuffers.has(peerId)) {
+      const buf = new EntityInterpolationBuffer();
+      if (this.roomCode) {
+        buf.setMatchIdHash(NetPacker.hashMatchId(this.roomCode));
+      }
+      this._interpBuffers.set(peerId, buf);
+    }
+    return this._interpBuffers.get(peerId);
+  }
+
+  _getDataChannelBufferedAmount() {
+    if (this._conn?.dataChannel?.bufferedAmount !== undefined) {
+      return this._conn.dataChannel.bufferedAmount;
+    }
+    if (this.isHost && this._connections.size > 0) {
+      let maxBuf = 0;
+      for (const [_, conn] of this._connections) {
+        if (conn.dataChannel?.bufferedAmount > maxBuf) {
+          maxBuf = conn.dataChannel.bufferedAmount;
+        }
+      }
+      return maxBuf;
+    }
+    return 0;
+  }
+
+  isChannelCongested() {
+    return this._getDataChannelBufferedAmount() > 48000;
+  }
+
+  _sendPingPacket(pingId, sendTime) {
+    this._sendBin(NetPacker.packPing(pingId, sendTime));
   }
 
   setLocalPlayerName(name) {
@@ -429,27 +487,39 @@ export class MultiplayerSystem {
    */
   _handleBinary(raw, senderPeerId = null) {
     try {
-      // ── Binary path (v2 protocol) ──────────────────────────────────────────
+      // ── Binary path (v3 protocol) ──────────────────────────────────────────
       if (raw instanceof ArrayBuffer) {
         if (raw.byteLength === 0) return;
+        this.diagnostics?.recordBytesReceived(raw.byteLength);
         const { typeId, payload } = NetPacker.unpack(raw);
+        if (!payload && typeId !== NetPacker.TYPE.WORLD_LAYOUT_ACK) return;
 
         switch (typeId) {
-          // ── High-frequency binary messages ─────────────────────────────────
-          case NetPacker.TYPE.SHIP_STATE:
-            if (senderPeerId) this.peerStates.set(senderPeerId, payload);
-            this.partnerState = payload;
-            this.onPartnerShipState?.(payload);
-            this.onPeerShipState?.(senderPeerId, payload);
-            if (this.isHost && senderPeerId) {
-              this._relayBinExcept(raw, senderPeerId);
+          // ── High-frequency ship movement snapshots (20 Hz) ────────────────
+          case NetPacker.TYPE.SHIP_STATE: {
+            this.diagnostics?.recordSnapshotReceived();
+            const interpBuffer = senderPeerId
+              ? this.getInterpolationBuffer(senderPeerId)
+              : this._partnerInterpBuffer;
+
+            const accepted = interpBuffer.pushSnapshot(payload);
+            if (accepted) {
+              if (senderPeerId) this.peerStates.set(senderPeerId, payload);
+              this.partnerState = payload;
+              this.onPartnerShipState?.(payload);
+              this.onPeerShipState?.(senderPeerId, payload);
+              if (this.isHost && senderPeerId) {
+                this._relayBinExcept(raw, senderPeerId);
+              }
             }
             break;
+          }
 
           case NetPacker.TYPE.AI_STATE:
             // payload = { ts: number, ships: Array } — include receive timestamp
             // for jitter buffer. Attach receiveTs so AISystem can use it.
             payload.receiveTs = performance.now();
+            this.diagnostics?.recordSnapshotReceived();
             this.onAIState?.(payload);
             EventEmitter.emit('mp:ai_state', payload);
             break;
@@ -461,9 +531,18 @@ export class MultiplayerSystem {
             }
             break;
 
-          case NetPacker.TYPE.DAMAGE_EVENT:
+          case NetPacker.TYPE.DAMAGE_EVENT: {
+            // Deduplicate: avoid re-applying same damage commit
+            if (payload.eventId && this._processedEventIds.has(payload.eventId)) break;
+            if (payload.eventId) this._processedEventIds.add(payload.eventId);
+
             this.onDamageEvent?.(payload);
+            EventEmitter.emit('mp:damage_event', payload);
+            if (this.isHost && senderPeerId) {
+              this._relayBinExcept(raw, senderPeerId);
+            }
             break;
+          }
 
           case NetPacker.TYPE.DMG_REQUEST: {
             // Authoritative damage bounds sanity check (anti-cheat)
@@ -480,6 +559,52 @@ export class MultiplayerSystem {
 
             this.onDamageRequest?.(payload);
             EventEmitter.emit('mp:dmg_request', payload);
+            break;
+          }
+
+          case NetPacker.TYPE.PING: {
+            // Immediately respond with pong carrying client's monotonic sendTime and host's tick
+            const pongBuf = NetPacker.packPong(payload.pingId, payload.sendTime, this._authoritativeTick);
+            if (senderPeerId && this._connections.has(senderPeerId)) {
+              try { this._connections.get(senderPeerId).send(pongBuf); } catch (e) {}
+            } else {
+              this._sendBin(pongBuf);
+            }
+            break;
+          }
+
+          case NetPacker.TYPE.PONG: {
+            // Deliver RTT measurement to diagnostics
+            this.diagnostics?.onPongReceived(payload.pingId, payload.sendTime, payload.receiverTick);
+            const j = this.diagnostics?.jitterEstimateMs || 0;
+            this._partnerInterpBuffer.setMeasuredJitter(j);
+            for (const [_, b] of this._interpBuffers) {
+              b.setMeasuredJitter(j);
+            }
+            break;
+          }
+
+          case NetPacker.TYPE.SHIP_DESTROYED: {
+            if (payload.eventId && this._processedEventIds.has(payload.eventId)) break;
+            if (payload.eventId) this._processedEventIds.add(payload.eventId);
+
+            this.onShipDestroyed?.(payload);
+            EventEmitter.emit('mp:ship_destroyed', payload);
+            if (this.isHost && senderPeerId) {
+              this._relayBinExcept(raw, senderPeerId);
+            }
+            break;
+          }
+
+          case NetPacker.TYPE.SHIP_RESPAWNED: {
+            if (payload.eventId && this._processedEventIds.has(payload.eventId)) break;
+            if (payload.eventId) this._processedEventIds.add(payload.eventId);
+
+            this.onShipRespawned?.(payload);
+            EventEmitter.emit('mp:ship_respawned', payload);
+            if (this.isHost && senderPeerId) {
+              this._relayBinExcept(raw, senderPeerId);
+            }
             break;
           }
 
@@ -624,7 +749,9 @@ export class MultiplayerSystem {
    * Used for high-frequency messages (ship state, AI state, cannon fire, damage).
    */
   _sendBin(buffer) {
-    if (!this.connected) return;
+    if (!this.connected || !buffer) return;
+    this.diagnostics?.recordBytesSent(buffer.byteLength);
+
     if (this.isHost && this._connections.size > 0) {
       for (const [_, conn] of this._connections) {
         if (conn.open) {
@@ -647,6 +774,8 @@ export class MultiplayerSystem {
   _sendJSON(type, data) {
     if (!this.connected) return;
     const packed = NetPacker.packJSON(type, data);
+    this.diagnostics?.recordBytesSent(packed.byteLength);
+
     if (this.isHost && this._connections.size > 0) {
       for (const [_, conn] of this._connections) {
         if (conn.open) {
@@ -683,9 +812,23 @@ export class MultiplayerSystem {
    */
   _send(type, data) { this._sendJSON(type, data); }
 
-  /** Send own ship state to partner — binary packed (16 bytes). */
+  /** Send own ship state to partner — binary packed (25 bytes v3). */
   sendShipState(ship) {
-    this._sendBin(NetPacker.packShipState(ship));
+    if (!this.connected || !ship) return;
+    if (this.isChannelCongested()) {
+      this.diagnostics.backpressureDrops++;
+      return;
+    }
+    this._localShipSeq = (this._localShipSeq + 1) & 0xFFFF;
+    const buf = NetPacker.packShipState(
+      ship,
+      this._localShipSeq,
+      this._authoritativeTick,
+      this.roomCode,
+      ship.lifecycleGen || this._localShipGen
+    );
+    this._sendBin(buf);
+    this.diagnostics?.recordSnapshotSent();
   }
 
   /** Send cannon fire event — binary packed (26 bytes). */
@@ -693,9 +836,51 @@ export class MultiplayerSystem {
     this._sendBin(NetPacker.packCannonFire(posL, velL, posR, velR, ammo));
   }
 
-  /** Send a damage event (host-authoritative) — binary packed (7 bytes). */
-  sendDamageEvent(shipId, damage) {
-    this._sendBin(NetPacker.packDamageEvent(shipId, damage));
+  /** Send a damage event (host-authoritative commit) — binary packed (20 bytes). */
+  sendDamageEvent(shipId, damage, remainingHp = 0, isKill = false, isCrit = false) {
+    const eventId = ++this._hostEventSeq;
+    const buf = NetPacker.packDamageEvent(
+      shipId,
+      damage,
+      remainingHp,
+      isKill,
+      isCrit,
+      eventId,
+      this.roomCode,
+      this._authoritativeTick
+    );
+    this._sendBin(buf);
+  }
+
+  /** Host: Broadcast authoritative ship destruction event (18 bytes). */
+  sendShipDestroyed(shipId, lifecycleGen = 1, respawnSec = 8.0) {
+    const eventId = ++this._hostEventSeq;
+    const buf = NetPacker.packShipDestroyed(
+      shipId,
+      lifecycleGen,
+      respawnSec,
+      eventId,
+      this.roomCode,
+      this._authoritativeTick
+    );
+    this._sendBin(buf);
+  }
+
+  /** Host: Broadcast authoritative ship respawn event (23 bytes). */
+  sendShipRespawned(shipId, newLifecycleGen, spawnX, spawnZ, spawnRy = 0, health = 100) {
+    const eventId = ++this._hostEventSeq;
+    const buf = NetPacker.packShipRespawned(
+      shipId,
+      newLifecycleGen,
+      spawnX,
+      spawnZ,
+      spawnRy,
+      health,
+      eventId,
+      this.roomCode,
+      this._authoritativeTick
+    );
+    this._sendBin(buf);
   }
 
   /** Send perk collected notification — JSON envelope (infrequent). */
@@ -769,12 +954,14 @@ export class MultiplayerSystem {
   }
 
   /**
-   * Client → Host: request that the host applies damage to an enemy ship — binary packed.
+   * Client → Host: request that the host applies damage to an enemy ship — binary packed (14 bytes v3).
    * @param {string} shipId — the ship.id assigned by the host
    * @param {number} damage — raw damage amount (host will re-apply armor)
+   * @param {string} [ammo='ROUND'] — ammo type
    */
-  sendDamageRequest(shipId, damage) {
-    this._sendBin(NetPacker.packDamageRequest(shipId, damage));
+  sendDamageRequest(shipId, damage, ammo = 'ROUND') {
+    const requestId = ++this._localShipSeq;
+    this._sendBin(NetPacker.packDamageRequest(shipId, damage, requestId, this.roomCode, ammo));
   }
 
   /**
@@ -837,6 +1024,10 @@ export class MultiplayerSystem {
   update(delta, playerShip, economy = null, islands = null, aiSerializedState = null, dayPhase = 0) {
     if (!this.connected) return;
 
+    this._authoritativeTick++;
+    this.diagnostics.latestAuthoritativeTick = this._authoritativeTick;
+    this.diagnostics.update(delta, (this.peerStates?.size || 0) + 1);
+
     // ── Ship state sync ──────────────────────────────────────────────────────
     this._syncTimer -= delta;
     if (this._syncTimer <= 0) {
@@ -877,8 +1068,10 @@ export class MultiplayerSystem {
 
   // ── Helpers ─────────────────────────────────────────────────────────────────
 
-  /** Dead-reckoning: interpolate partner ship position forward. */
-  getInterpolatedPartnerState(delta) {
+  /** Sample smooth interpolation from entity interpolation buffer. */
+  getInterpolatedPartnerState(delta = 0) {
+    const sampled = this._partnerInterpBuffer.sample();
+    if (sampled) return sampled;
     const s = this.partnerState;
     return {
       x:  s.x  + s.vx * delta,

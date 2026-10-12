@@ -2048,16 +2048,7 @@ class Game {
             this.scene.add(p.ship.group);
           }
           if (p.ship.group) p.ship.group.visible = true;
-          if (state.hp > 0 && (p.ship.state === 'SUNK' || p.ship.state === 'SINKING')) {
-            p.ship.state = 'SAILING';
-            p.ship._sinkTimer = 0;
-            this.ships?.registerShip(p.ship);
-          }
-          p.ship.setPosition(state.x, state.y, state.z);
-          p.ship.setRotationY(state.ry);
-          p.ship.velocity?.set(state.vx, state.vy, state.vz);
-          p.ship.health = state.hp;
-          p.ship.maxHealth = state.mhp;
+          // Note: transform is driven smoothly each frame by EntityInterpolationBuffer
         }
       }
     };
@@ -2085,16 +2076,58 @@ class Game {
           if (part) ship = part.ship;
         }
         if (ship && (ship.isSailing || ship.state === 'SAILING')) {
-          ship.takeDamage(data.dmg);
+          const actualDmg = ship.takeDamage(data.dmg);
+          const isKill = ship.health <= 0;
+          const isCrit = actualDmg >= 24;
+          // Promptly broadcast authoritative damage commit to all clients
+          this.mp.sendDamageEvent(ship.id, actualDmg, ship.health, isKill, isCrit);
+          if (isKill) {
+            this.mp.sendShipDestroyed(ship.id, ship.lifecycleGen || 1, 8.0);
+          }
         }
       };
     } else {
       // Client: route player cannon hits on enemies to host for authoritative damage
       if (this.combat) {
-        this.combat.onPlayerHitEnemy = (ship, damage) => {
-          this.mp.sendDamageRequest(ship.id, damage);
+        this.combat.onPlayerHitEnemy = (ship, damage, ammo = 'ROUND') => {
+          this.mp.sendDamageRequest(ship.id, damage, ammo);
         };
       }
+
+      // Authoritative damage event broadcast from host
+      this.mp.onDamageEvent = (data) => {
+        let ship = this.ships?.get(data.id);
+        if (!ship && this.teamBattle) {
+          const part = this.teamBattle.participants.find(p => p.ship?.id === data.id || p.id === data.id);
+          if (part) ship = part.ship;
+        }
+        if (ship) {
+          ship.setAuthoritativeHealth(data.remainingHp);
+        }
+      };
+
+      this.mp.onShipDestroyed = (data) => {
+        let ship = this.ships?.get(data.id);
+        if (!ship && this.teamBattle) {
+          const part = this.teamBattle.participants.find(p => p.ship?.id === data.id || p.id === data.id);
+          if (part) ship = part.ship;
+        }
+        if (ship && ship.isSailing) {
+          ship.health = 0;
+          ship._beginSinking?.();
+        }
+      };
+
+      this.mp.onShipRespawned = (data) => {
+        let ship = this.ships?.get(data.id);
+        if (!ship && this.teamBattle) {
+          const part = this.teamBattle.participants.find(p => p.ship?.id === data.id || p.id === data.id);
+          if (part) ship = part.ship;
+        }
+        if (ship) {
+          ship.respawn(data.spawnX, 1.0, data.spawnZ, data.spawnRy, data.health);
+        }
+      };
     }
 
     EventEmitter.on('mp:peer_disconnected', ({ peerId }) => {
@@ -2383,16 +2416,39 @@ class Game {
           this.scene.add(this._partnerShip.group);
         }
         if (this._partnerShip.group) this._partnerShip.group.visible = true;
-        if (state.hp > 0 && (this._partnerShip.state === 'SUNK' || this._partnerShip.state === 'SINKING')) {
-          this._partnerShip.state = 'SAILING';
-          this._partnerShip._sinkTimer = 0;
-          this.ships?.registerShip(this._partnerShip);
-        }
-        this._partnerShip.group.position.set(state.x, state.y, state.z);
-        this._partnerShip.group.rotation.y = state.ry;
-        this._partnerShip.velocity?.set(state.vx, state.vy, state.vz);
-        this._partnerShip.health = state.hp;
-        this._partnerShip.maxHealth = state.mhp;
+        // Transform is updated smoothly every frame via this.mp.getPrimaryInterpolationBuffer()
+      }
+    };
+
+    this.mp.onDamageEvent = (data) => {
+      const ship = this.ships?.get(data.id);
+      if (ship) {
+        ship.setAuthoritativeHealth(data.remainingHp);
+      }
+      if (this.mp.isClient && data.dmg > 0) {
+        EventEmitter.emit('combat:hitmarker', { isKill: data.isKill, isCrit: data.isCrit, damage: data.dmg });
+        EventEmitter.emit('camera:shake', { intensity: data.isKill ? 0.48 : data.isCrit ? 0.38 : 0.25, duration: 0.20 });
+      }
+    };
+
+    this.mp.onShipDestroyed = (data) => {
+      let ship = this.ships?.get(data.id);
+      if (!ship && this._partnerShip && (data.id === this._partnerShip.id || data.hash === NetPacker.getShipHash(this._partnerShip.id))) {
+        ship = this._partnerShip;
+      }
+      if (ship && ship.isSailing) {
+        ship.health = 0;
+        ship._beginSinking?.();
+      }
+    };
+
+    this.mp.onShipRespawned = (data) => {
+      let ship = this.ships?.get(data.id);
+      if (!ship && this._partnerShip && (data.id === this._partnerShip.id || data.hash === NetPacker.getShipHash(this._partnerShip.id))) {
+        ship = this._partnerShip;
+      }
+      if (ship) {
+        ship.respawn(data.spawnX, 1.0, data.spawnZ, data.spawnRy, data.health);
       }
     };
 
@@ -2464,17 +2520,24 @@ class Game {
         }
         // Sync day/night cycle from host so both players see the same sky
         if (snap.dayPhase !== undefined && this.sky) {
-          this.sky._dayPhase = snap.dayPhase;
+          if (this.sky.setDayPhase) this.sky.setDayPhase(snap.dayPhase);
+          else this.sky._dayPhase = snap.dayPhase;
         }
       };
     }
 
     if (this.mp.isHost) {
-      // Host: receive damage requests from client and apply to the authoritative ship
+      // Host: receive damage requests from client, authoritatively apply damage, and broadcast results
       this.mp.onDamageRequest = (data) => {
         const ship = this.ships?.get(data.id);
-        if (ship && ship.isSailing) {
-          ship.takeDamage(data.dmg);
+        if (ship && (ship.isSailing || ship.state === 'SAILING')) {
+          const actualDmg = ship.takeDamage(data.dmg);
+          const isKill = ship.health <= 0;
+          const isCrit = actualDmg >= 24;
+          this.mp.sendDamageEvent(ship.id, actualDmg, ship.health, isKill, isCrit);
+          if (isKill) {
+            this.mp.sendShipDestroyed(ship.id, ship.lifecycleGen || 1, 8.0);
+          }
         }
       };
     }
@@ -2599,7 +2662,7 @@ class Game {
           this._bgInterval = setInterval(() => {
             if (!this._running) return;
             const now = performance.now();
-            const delta = Math.min((now - lastBgTime) / 1000, 0.1);
+            const delta = Math.min((now - lastBgTime) / 1000, 0.05);
             lastBgTime = now;
             this._update(delta);
           }, 1000 / 30);
@@ -2641,7 +2704,7 @@ class Game {
 
     if (document.hidden) return;
 
-    const delta = Math.min(this.clock.getDelta(), 0.1); // cap at 100ms
+    const delta = Math.min(this.clock.getDelta(), 0.05); // cap at 50ms (prevent simulation spikes)
 
     // Real-time FPS calculation updated every 0.5s
     this._fpsTimer = (this._fpsTimer || 0) + delta;
@@ -2989,7 +3052,11 @@ class Game {
 
     // ── Multiplayer per-frame ─────────────────────────────────────────────────
     if (this.mp) {
+      const now = performance.now();
       if (this.isCoop) {
+        if (this._partnerShip) {
+          this.mp.getPrimaryInterpolationBuffer()?.applyToShip(this._partnerShip, now);
+        }
         // Tick the MP system (sends ship state, world snapshots, rescue timer, AI state)
         this.mp.update(
           delta,
@@ -3000,6 +3067,15 @@ class Game {
           this.mp.isHost ? (this.sky?._dayPhase ?? 0) : 0,
         );
       } else if (this.isTeamBattle) {
+        // Apply interpolation buffer to all remote human ships
+        if (this.teamBattle?.participants) {
+          for (const p of this.teamBattle.participants) {
+            if (!p.isBot && p.id !== 'local_player' && p.ship) {
+              const buf = this.mp.getInterpolationBuffer(p.id) || (!this.mp.isHost ? this.mp.getPrimaryInterpolationBuffer() : null);
+              buf?.applyToShip(p.ship, now);
+            }
+          }
+        }
         // Team Battle: broadcast local player ship state at 20Hz + sync dayPhase from host
         this.mp.update(
           delta,

@@ -1283,9 +1283,12 @@ export class TeamBattleSystem {
       entry.timer -= delta;
       this.game.hud?.updateRespawnCountdown(entry.timer);
       if (entry.timer <= 0) {
-        this._respawnQueue.delete('local_player');
-        this.game.hud?.hideRespawnCountdown();
-        this._respawnParticipant(entry.participant);
+        // In multiplayer client mode, do not unilaterally respawn local ship — wait for host authoritative state
+        if (!this.game.mp?.connected || !this.game.mp?.isClient) {
+          this._respawnQueue.delete('local_player');
+          this.game.hud?.hideRespawnCountdown();
+          this._respawnParticipant(entry.participant);
+        }
       }
     }
   }
@@ -1372,18 +1375,11 @@ export class TeamBattleSystem {
           if (pData.hp <= 0 && ship.state !== 'SUNK' && ship.state !== 'SINKING') {
             ship.takeDamage(ship.health);
           } else if (pData.hp > 0 && (ship.state === 'SUNK' || ship.state === 'SINKING')) {
-            // Respawned by host
-            ship.state = 'SAILING';
-            ship._sinkTimer = 0;
-            ship.health = pData.hp;
-            ship.maxHealth = pData.mhp;
-            ship.setPosition(pData.x, pData.y, pData.z);
-            ship.setRotationY(pData.ry);
+            // Authoritative respawn confirmed by host
+            ship.respawn(pData.x, 1.0, pData.z, pData.ry, pData.hp);
             this.game.ships?.registerShip(ship);
-            if (ship.group) {
-              if (!ship.group.parent) this.game.scene.add(ship.group);
-              ship.group.visible = true;
-            }
+            this._respawnQueue.delete('local_player');
+            this.game.hud?.hideRespawnCountdown();
           }
         } else {
           // Remote participant or AI bot
@@ -1392,29 +1388,30 @@ export class TeamBattleSystem {
           }
           if (ship.group) ship.group.visible = true;
 
-          if (pData.hp > 0 && (ship.state === 'SUNK' || ship.state === 'SINKING')) {
-            ship.state = 'SAILING';
-            ship._sinkTimer = 0;
-            this.game.ships?.registerShip(ship);
-          } else if (pData.hp <= 0 && ship.state === 'SAILING') {
-            ship.state = 'SUNK';
+          // Only trigger sinking if ship was sailing and host reports 0 HP
+          if (pData.hp <= 0 && ship.state === 'SAILING') {
+            ship.health = 0;
+            ship._beginSinking?.();
           }
 
-          // Positional interpolation with teleport threshold
-          const curPos = ship.group.position;
-          const distSq = (curPos.x - pData.x) ** 2 + (curPos.z - pData.z) ** 2;
-          if (distSq > 400) {
-            ship.setPosition(pData.x, pData.y, pData.z);
-            ship.setRotationY(pData.ry);
-          } else {
-            curPos.x += (pData.x - curPos.x) * 0.45;
-            curPos.y = pData.y;
-            curPos.z += (pData.z - curPos.z) * 0.45;
-            const diff = ((pData.ry - ship.group.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
-            ship.group.rotation.y += diff * 0.45;
+          // If this is an AI bot (host simulates bots), update bot transform smoothly
+          if (p.isBot && ship.state === 'SAILING') {
+            const curPos = ship.group.position;
+            const distSq = (curPos.x - pData.x) ** 2 + (curPos.z - pData.z) ** 2;
+            if (distSq > 400) {
+              ship.setPosition(pData.x, pData.y, pData.z);
+              ship.setRotationY(pData.ry);
+            } else {
+              curPos.x += (pData.x - curPos.x) * 0.45;
+              curPos.y = pData.y;
+              curPos.z += (pData.z - curPos.z) * 0.45;
+              const diff = ((pData.ry - ship.group.rotation.y + Math.PI) % (Math.PI * 2)) - Math.PI;
+              ship.group.rotation.y += diff * 0.45;
+            }
+            ship.velocity?.set(pData.vx, pData.vy, pData.vz);
           }
+          // Note: Human player peer ships have transforms smoothly driven by EntityInterpolationBuffer
 
-          ship.velocity?.set(pData.vx, pData.vy, pData.vz);
           ship.health = pData.hp;
           ship.maxHealth = pData.mhp;
           ship.thrust = pData.thrust;

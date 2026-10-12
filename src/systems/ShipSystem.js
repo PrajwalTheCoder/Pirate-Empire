@@ -89,6 +89,9 @@ export class Ship {
 
     // Drift state
     this.isDrifting = false;
+
+    // Network lifecycle generation tracker
+    this.lifecycleGen = 1;
   }
 
   // ── Public API ──────────────────────────────────────────────────────────────
@@ -124,6 +127,41 @@ export class Ship {
   /** Heal ship (e.g. from repairs). */
   heal(amount) {
     this.health = clamp(this.health + amount, 0, this.maxHealth);
+  }
+
+  /** Authoritatively update health. Triggers sinking if reduced to 0. */
+  setAuthoritativeHealth(hp, mhp = null) {
+    if (mhp !== null && mhp !== undefined) this.maxHealth = mhp;
+    this.health = clamp(hp, 0, this.maxHealth);
+    if (this.health <= 0 && this.state === ShipState.SAILING) {
+      this._beginSinking();
+    }
+  }
+
+  /**
+   * Authoritatively respawn the ship.
+   * Increments lifecycleGen, resets sinking state, and teleports to spawn.
+   */
+  respawn(x = 0, y = 1.0, z = 0, ry = 0, hp = null) {
+    this.lifecycleGen++;
+    this.state = ShipState.SAILING;
+    this._sinkTimer = 0;
+    this.maxHealth = this.maxHealth || 100;
+    this.health = hp !== null && hp !== undefined ? hp : this.maxHealth;
+    this.setPosition(x, y, z);
+    this.setRotationY(ry);
+    this.velocity.set(0, 0, 0);
+    this.angularVelocity = 0;
+    this.thrust = 0;
+    this.steering = 0;
+
+    if (this.group) {
+      if (!this.group.parent && this.scene) this.scene.add(this.group);
+      this.group.visible = true;
+      this.group.rotation.set(0, ry, 0);
+    }
+
+    EventEmitter.emit('ship:respawned', { ship: this, lifecycleGen: this.lifecycleGen });
   }
 
   get isAlive() { return this.state !== ShipState.SUNK; }
@@ -527,7 +565,7 @@ export class Ship {
     this.thrust   = 0;
     this.steering = 0;
 
-    EventEmitter.emit('ship:destroyed', { ship: this });
+    EventEmitter.emit('ship:destroyed', { ship: this, lifecycleGen: this.lifecycleGen });
   }
 
   _completeSink() {
