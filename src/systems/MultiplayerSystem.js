@@ -265,6 +265,7 @@ export class MultiplayerSystem {
           // binary serialization mode — PeerJS passes ArrayBuffer directly
           const conn = this._peer.connect(this.roomCode, { reliable: true, serialization: 'binary' });
           this._conn = conn;
+          this._connections.set(conn.peer, conn);
           this._setupConnection(conn);
 
           // Monitor ICE state for better user feedback
@@ -498,11 +499,16 @@ export class MultiplayerSystem {
           // ── High-frequency ship movement snapshots (20 Hz) ────────────────
           case NetPacker.TYPE.SHIP_STATE: {
             this.diagnostics?.recordSnapshotReceived();
+            // Maintain primary partner buffer for single-peer compatibility
+            this._partnerInterpBuffer.pushSnapshot(payload);
             const interpBuffer = senderPeerId
               ? this.getInterpolationBuffer(senderPeerId)
               : this._partnerInterpBuffer;
 
-            const accepted = interpBuffer.pushSnapshot(payload);
+            const accepted = interpBuffer === this._partnerInterpBuffer
+              ? true
+              : interpBuffer.pushSnapshot(payload);
+
             if (accepted) {
               if (senderPeerId) this.peerStates.set(senderPeerId, payload);
               this.partnerState = payload;
@@ -645,6 +651,9 @@ export class MultiplayerSystem {
         if (msg.d?.name) {
           this.partnerName = msg.d.name;
           this.partnerState.name = msg.d.name;
+          if (this._conn) {
+            this._conn.peerName = msg.d.name;
+          }
           if (senderPeerId && this._connections.has(senderPeerId)) {
             const conn = this._connections.get(senderPeerId);
             conn.peerName = msg.d.name;

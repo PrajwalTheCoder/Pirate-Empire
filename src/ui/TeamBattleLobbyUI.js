@@ -639,6 +639,8 @@ export class TeamBattleLobbyUI {
       mode: this.selectedMode || '2v2',
       botFill: this.botFill,
       localTeam: this.localTeam,
+      hostName: this.game.playerName,
+      hostPeerId: this.roomCode,
     };
 
     // Transition room to in_progress in Supabase

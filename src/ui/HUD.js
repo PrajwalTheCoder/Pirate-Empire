@@ -517,9 +517,29 @@ export class HUD {
         const badge = isAlly
           ? `<span class="som-badge-tag ally">ALLY</span>`
           : `<span class="som-badge-tag enemy">ENEMY</span>`;
-        const teamName = isCrimson ? '🔴 Crimson Corsair' : '🔵 Black Tide Raider';
+
+        let captainName = ship.playerName || ship.name;
+        if (!captainName && window.__game?.teamBattle?.participants) {
+          const part = window.__game.teamBattle.participants.find(p => p.ship === ship || (ship.participantId && p.id === ship.participantId));
+          if (part) {
+            captainName = part.name;
+            ship.playerName = part.name;
+            if (part.isBot !== undefined) ship.isBot = part.isBot;
+          }
+        }
+
+        let displayName = '';
+        if (captainName) {
+          const isBot = ship.isBot || captainName.includes('[BOT]') || captainName.includes('[AI]');
+          const icon = isCrimson ? '🔴' : '🔵';
+          const symbol = isBot ? '🤖' : '👑';
+          displayName = `${icon} ${symbol} ${captainName}`;
+        } else {
+          displayName = isCrimson ? '🔴 Crimson Corsair' : '🔵 Black Tide Raider';
+        }
+
         barData.nameEl.className = `som-name ${isAlly ? 'ally' : 'enemy'}`;
-        barData.nameEl.innerHTML = `${badge}${teamName}`;
+        barData.nameEl.innerHTML = `${badge}${displayName}`;
         barData.fillEl.style.background = isAlly
           ? (pct > 0.5 ? '#36d399' : pct > 0.25 ? '#ffb300' : '#ff3d00')
           : (isCrimson ? '#ff3b3b' : '#3895e6');

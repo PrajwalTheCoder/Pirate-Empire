@@ -1973,6 +1973,8 @@ class Game {
       mode: mode || '2v2',
       botFill: botFill !== false,
       localTeam: this.teamBattleLobby?.localTeam || 'CRIMSON',
+      hostName: this.playerName,
+      hostPeerId: this.mp?.roomCode || this.mp?._peer?.id,
     };
 
     if (this.mp?.isHost) {
@@ -2047,10 +2049,16 @@ class Game {
       if (this.teamBattle) {
         let p = this.teamBattle.participants.find(part => part.id === peerId);
         if (!p && !this.mp.isHost) {
-          // On client, match the non-local player participant
+          // On client, match the host / non-local player participant
           p = this.teamBattle.participants.find(part => !part.isBot && part.id !== 'local_player');
+          if (p && (p.id === 'peer_partner' || p.isHost)) {
+            p.id = peerId;
+          }
         }
         if (p && p.ship) {
+          if (p.name && !p.ship.playerName) {
+            p.ship.playerName = p.name;
+          }
           if (p.ship.group && !p.ship.group.parent) {
             this.scene.add(p.ship.group);
           }
@@ -2189,6 +2197,9 @@ class Game {
     this.isCoop = false;
     this._storyMode = false;
     this.teamBattleConfig = config || { mode: '2v2', botFill: true, localTeam: 'CRIMSON' };
+    if (this.mp) {
+      this.mp._localPlayerName = this.playerName;
+    }
 
     // Hide standard sandbox islands and debris so Team Battle arena is clean and balanced
     if (this._islands) {
@@ -3078,7 +3089,15 @@ class Game {
         if (this.teamBattle?.participants) {
           for (const p of this.teamBattle.participants) {
             if (!p.isBot && p.id !== 'local_player' && p.ship) {
-              const buf = this.mp.getInterpolationBuffer(p.id) || (!this.mp.isHost ? this.mp.getPrimaryInterpolationBuffer() : null);
+              let buf = this.mp.getInterpolationBuffer(p.id);
+              if ((!buf || buf.snapshots?.length === 0) && !this.mp.isHost) {
+                const fallback = (this.mp.roomCode && this.mp.getInterpolationBuffer(this.mp.roomCode))
+                  || (this.mp._conn?.peer && this.mp.getInterpolationBuffer(this.mp._conn.peer))
+                  || this.mp.getPrimaryInterpolationBuffer();
+                if (fallback && fallback.snapshots?.length > 0) {
+                  buf = fallback;
+                }
+              }
               buf?.applyToShip(p.ship, now);
             }
           }

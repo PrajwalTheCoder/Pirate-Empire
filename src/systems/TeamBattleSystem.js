@@ -109,6 +109,22 @@ export class TeamBattleSystem {
     // Defense Cannon AI cooldowns
     this._islandCannonCooldownA = 0;
     this._islandCannonCooldownB = 0;
+
+    // Listen for peer captain name exchange
+    EventEmitter.on('mp:partner_name', ({ name, peerId }) => {
+      if (!name) return;
+      for (const p of this.participants) {
+        if (!p.isBot && p.id !== 'local_player') {
+          if (!peerId || p.id === peerId || p.isHost || p.id === 'peer_partner' || p.id === this.game.mp?.roomCode) {
+            p.name = name;
+            if (p.ship) {
+              p.ship.playerName = name;
+              if (p.ship.group) p.ship.group.name = name;
+            }
+          }
+        }
+      }
+    });
   }
 
   // ── MAP INITIALIZATION ───────────────────────────────────────────────────────
@@ -511,7 +527,7 @@ export class TeamBattleSystem {
       if (this.game.mp.isHost && this.game.mp._connections?.size > 0) {
         let peerCount = 0;
         for (const [peerId, conn] of this.game.mp._connections) {
-          const peerName = conn.peerName || `Captain ${peerId.slice(-4).toUpperCase()}`;
+          const peerName = conn.peerName || this.game.mp.partnerName || `Captain ${peerId.slice(-4).toUpperCase()}`;
           const team = peerCount % 2 === 0 ? Team.BLACK_TIDE : Team.CRIMSON;
           this.participants.push({
             id: peerId,
@@ -526,13 +542,14 @@ export class TeamBattleSystem {
           peerCount++;
         }
       } else {
-        const partnerName = this.game.mp.partnerName || 'Admiral (Host)';
+        const partnerName = this.game.mp.partnerName || this.game.teamBattleConfig?.hostName || 'Admiral (Host)';
+        const hostPeerId = this.game.mp.roomCode || this.game.mp._conn?.peer || 'peer_partner';
         this.participants.push({
-          id: 'peer_partner',
+          id: hostPeerId,
           name: partnerName,
           team: Team.CRIMSON,
           isBot: false,
-          isHost: false,
+          isHost: true,
           ready: true,
           shipClass: 'PIRATE_SMALL',
           ship: null,
@@ -617,6 +634,10 @@ export class TeamBattleSystem {
       bot.isBot = false;
       if (bot.ship) {
         bot.ship._isPartnerGhost = true;
+        bot.ship.playerName = bot.name;
+        bot.ship.isBot = false;
+        bot.ship.participantId = peerId;
+        if (bot.ship.group) bot.ship.group.name = bot.name;
       }
       this.game.hud?.showTeamBattleAnnouncement(`⚔️ Captain ${bot.name} has joined the battle!`, 'success');
       this.game.hud?.toast(`⚔️ ${bot.name} joined the fleet!`, 'success');
@@ -649,23 +670,33 @@ export class TeamBattleSystem {
         ship.health = ship.maxHealth;
         ship.velocity.set(0, 0, 0);
         ship.team = p.team;
+        ship.playerName = p.name;
+        ship.isBot = false;
+        ship.participantId = p.id;
+        ship.isHost = p.isHost;
         ship.state = 'SAILING';
         ship._sinkTimer = 0;
         this.game.ships?.registerShip(ship);
         if (ship.group) {
           if (!ship.group.parent) this.game.scene.add(ship.group);
           ship.group.visible = true;
+          ship.group.name = p.name;
         }
         p.ship = ship;
         this._applyTeamVisuals(ship, p.team);
-      } else if (p.id === 'peer_partner' && this.game._partnerShip) {
+      } else if ((p.id === 'peer_partner' || p.isHost) && this.game._partnerShip) {
         // Reuse partner ghost ship
         const ship = this.game._partnerShip;
         ship.setPosition(spawnX, 1.0, spawnZ);
         ship.setRotationY(cfg.facingRad);
         ship.health = ship.maxHealth;
         ship.team = p.team;
+        ship.playerName = p.name;
+        ship.isBot = false;
+        ship.participantId = p.id;
+        ship.isHost = p.isHost;
         ship._isPartnerGhost = true;
+        if (ship.group) ship.group.name = p.name;
         p.ship = ship;
         this._applyTeamVisuals(ship, p.team);
       } else {
@@ -673,10 +704,15 @@ export class TeamBattleSystem {
         const ship = this.game.ships.createShip(p.shipClass, 'PLAYER', spawnX, spawnZ);
         ship.setRotationY(cfg.facingRad);
         ship.team = p.team;
+        ship.playerName = p.name;
+        ship.isBot = p.isBot;
+        ship.participantId = p.id;
+        ship.isHost = p.isHost;
         if (!p.isBot) {
           ship._isPartnerGhost = true;
           ship._networkPeerId = p.id;
         }
+        if (ship.group) ship.group.name = p.name;
         p.ship = ship;
         this._applyTeamVisuals(ship, p.team);
       }
@@ -1360,12 +1396,30 @@ export class TeamBattleSystem {
     // Reconcile and interpolate all participants (bots and players)
     if (Array.isArray(state.participants)) {
       for (const pData of state.participants) {
-        let localP = this.participants.find(p => p.id === pData.id);
-        if (!localP && !this.game.mp?.isHost) {
-          if (pData.isHost) {
-            localP = this.participants.find(p => p.id === 'peer_partner' || p.isHost);
+        let localP = null;
+        if (this.game.mp?.isHost) {
+          localP = this.participants.find(p => p.id === pData.id);
+        } else {
+          // Client perspective:
+          if (pData.isHost || (pData.id === 'local_player' && !pData.isBot)) {
+            // This is the Host
+            localP = this.participants.find(p => p.isHost || p.id === 'peer_partner' || p.id === this.game.mp?.roomCode || p.id === this.game.mp?._conn?.peer);
+            if (localP && pData.name && (!localP.name || localP.name.includes('Host') || localP.name.includes('Captain'))) {
+              localP.name = pData.name;
+              if (localP.ship) {
+                localP.ship.playerName = pData.name;
+                if (localP.ship.group) localP.ship.group.name = pData.name;
+              }
+            }
+          } else if (pData.id === this.game.mp?._peer?.id || pData.name === this.game.playerName) {
+            // Local client player
+            localP = this.participants.find(p => p.id === 'local_player');
+          } else {
+            // AI Bot or other peer
+            localP = this.participants.find(p => p.id === pData.id);
           }
         }
+
         if (!localP || !localP.ship) continue;
 
         const ship = localP.ship;
@@ -1395,7 +1449,7 @@ export class TeamBattleSystem {
           }
 
           // If this is an AI bot (host simulates bots), update bot transform smoothly
-          if (p.isBot && ship.state === 'SAILING') {
+          if ((localP.isBot || pData.isBot) && ship.state === 'SAILING') {
             const curPos = ship.group.position;
             const distSq = (curPos.x - pData.x) ** 2 + (curPos.z - pData.z) ** 2;
             if (distSq > 400) {
@@ -1416,6 +1470,9 @@ export class TeamBattleSystem {
           ship.maxHealth = pData.mhp;
           ship.thrust = pData.thrust;
           ship.steering = pData.steering;
+          if (pData.name && !ship.playerName) {
+            ship.playerName = pData.name;
+          }
         }
       }
     }
