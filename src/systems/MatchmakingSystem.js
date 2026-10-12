@@ -150,7 +150,7 @@ export class MatchmakingSystem {
       .select('id, room_code, host_player_id, host_name, game_mode, player_count, max_players, status, protocol_version, last_heartbeat')
       .eq('is_public', true)
       .eq('status', 'waiting')
-      .eq('protocol_version', PROTOCOL_VERSION)
+      .in('protocol_version', [2, 3])
       .gt('last_heartbeat', minHeartbeat)
       .order('created_at', { ascending: true })
       .limit(10);
@@ -321,6 +321,7 @@ export class MatchmakingSystem {
         last_heartbeat: new Date().toISOString(),
       };
 
+      let registeredInDb = false;
       try {
         const { error: insertError } = await withTimeout(
           supabase.from('public_rooms').insert([roomRecord]),
@@ -332,17 +333,19 @@ export class MatchmakingSystem {
           console.warn('[Matchmaking] Room registration error:', insertError.message);
         } else {
           console.log('[Matchmaking] ✅ Public room registered:', roomCode);
+          registeredInDb = true;
           this.startHeartbeat(roomCode);
         }
       } catch (dbErr) {
         console.warn('[Matchmaking] Room DB insert threw error:', dbErr.message);
       }
+      this.isPublicRoom = registeredInDb;
     } else {
       console.log('[Matchmaking] Private room initialized (not listed in public registry):', roomCode);
     }
 
     report(`✅ Fleet ready! Room: ${roomCode}`);
-    return { success: true, role: 'HOST', roomCode };
+    return { success: true, role: 'HOST', roomCode, isPublic: this.isPublicRoom, dbRegistered: this.isPublicRoom };
   }
 
   // ── HEARTBEAT AND CLEANUP ────────────────────────────────────────────────

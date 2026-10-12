@@ -459,11 +459,16 @@ export class TeamBattleLobbyUI {
 
       if (result?.success) {
         this.isHost = true;
-        this.isPublic = true;
+        this.isPublic = result.isPublic;
         this.roomCode = result.roomCode;
         this.localTeam = 'CRIMSON';
-        this.showWaitingLobby(true, true, result.roomCode);
-        this.setLobbyStatus('⚓ Fleet open to public! Waiting for captains to join...');
+        this.showWaitingLobby(true, result.isPublic, result.roomCode);
+        if (result.dbRegistered) {
+          this.setLobbyStatus('⚓ Fleet open to public! Waiting for captains to join...');
+        } else {
+          this.setLobbyStatus(`⚠️ Public registry unreachable on this network. Share room code [${result.roomCode}] or link to join!`);
+          this.game.hud?.toast(`⚠️ Public registry unreachable. Share room code [${result.roomCode}] to join!`, 'warning');
+        }
       } else {
         if (statusText) statusText.textContent = `❌ Hosting error: ${result?.error || 'Failed to initialize relay'}`;
       }

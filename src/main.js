@@ -196,8 +196,7 @@ class Game {
           try {
             const res = await checkNameAvailability(trimmed, this.playerId);
             if (res.error) {
-              updateStatus('invalid', '⚠️ Connection failed (registry unreachable)');
-              // If Supabase is offline/paused, let them click Save anyway as fallback
+              updateStatus('available', '⛵ Registry offline — click Save to use locally');
               saveBtn.disabled = false;
               return;
             }
@@ -216,7 +215,7 @@ class Game {
             }
           } catch (err) {
             console.error('[Name Check] Error:', err);
-            updateStatus('invalid', '⚠️ Error scanning registry');
+            updateStatus('available', '⛵ Registry offline — click Save to use locally');
             saveBtn.disabled = false;
           }
         }, 500);
@@ -242,13 +241,21 @@ class Game {
             saveBtn.disabled = true;
             console.log(`[Name Registered] Welcome, Captain ${trimmed}! ID: ${res.id}`);
           } else {
-            updateStatus('invalid', `⚠️ Save failed: ${res.error}`);
-            saveBtn.disabled = false;
+            // Fallback for offline / network issues
+            this.playerName = trimmed;
+            localStorage.setItem('pe_player_name', this.playerName);
+            updateStatus('owned', `⚓ Saved as Captain ${trimmed} (local mode)`);
+            saveBtn.disabled = true;
+            this.hud?.toast(`⚓ Welcome, Captain ${trimmed}!`, 'success');
           }
         } catch (err) {
           console.error('[Name Save] Error:', err);
-          updateStatus('invalid', '⚠️ Error writing to ledger');
-          saveBtn.disabled = false;
+          // Fallback for offline / network issues
+          this.playerName = trimmed;
+          localStorage.setItem('pe_player_name', this.playerName);
+          updateStatus('owned', `⚓ Saved as Captain ${trimmed} (local mode)`);
+          saveBtn.disabled = true;
+          this.hud?.toast(`⚓ Welcome, Captain ${trimmed}!`, 'success');
         } finally {
           nameInput.disabled = false;
         }
