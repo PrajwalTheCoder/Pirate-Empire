@@ -153,23 +153,23 @@
       <div class="mm-name-input-group">
         <label class="mm-name-label" for="mm-player-name">🏴‍☠️ Pirate Name:</label>
         <div class="mm-name-input-row">
-          <input type="text" id="mm-player-name" placeholder="Captain Jack" maxlength="15" autocomplete="off" spellcheck="false" />
-          <button id="mm-save-name" class="mm-btn-save" disabled>⚓ Save</button>
+          <input type="text" id="mm-player-name" name="playerName" placeholder="Captain Jack" maxlength="15" autocomplete="off" spellcheck="false" />
+          <button id="mm-save-name" name="saveBtn" class="mm-btn-save" disabled>⚓ Save</button>
         </div>
         <div id="mm-name-status" class="mm-name-status"></div>
       </div>
 
       <!-- Nav buttons -->
       <nav class="mm-nav">
-        <button class="mm-btn mm-btn-quickplay" id="mm-quickplay">⚡ &nbsp;Quick Play</button>
-        <button class="mm-btn mm-btn-teambattle" id="mm-teambattle">⚔️ &nbsp;Team Battle (2v2 / 4v4)</button>
-        <button class="mm-btn mm-btn-story" id="mm-story">☠️ &nbsp;Story Mode</button>
-        <button class="mm-btn mm-btn-play" id="mm-play">⚓ &nbsp;Solo Voyage</button>
-        <button class="mm-btn mm-btn-daily" id="mm-daily">🎁 &nbsp;Daily Rewards</button>
-        <button class="mm-btn mm-btn-coop" id="mm-coop">🤝 &nbsp;Co-op Mode</button>
-        <button class="mm-btn" id="mm-leaderboard">🏆 &nbsp;Leaderboard</button>
-        <button class="mm-btn" id="mm-settings">⚙️ &nbsp;Settings</button>
-        <button class="mm-btn" id="mm-credits">📜 &nbsp;Credits</button>
+        <button class="mm-btn mm-btn-quickplay" id="mm-quickplay" name="quickplayBtn">⚡ &nbsp;Quick Play</button>
+        <button class="mm-btn mm-btn-teambattle" id="mm-teambattle" name="teambattleBtn">⚔️ &nbsp;Team Battle (2v2 / 4v4)</button>
+        <button class="mm-btn mm-btn-story" id="mm-story" name="storyBtn">☠️ &nbsp;Story Mode</button>
+        <button class="mm-btn mm-btn-play" id="mm-play" name="soloPlayBtn">⚓ &nbsp;Solo Voyage</button>
+        <button class="mm-btn mm-btn-daily" id="mm-daily" name="dailyRewardsBtn">🎁 &nbsp;Daily Rewards</button>
+        <button class="mm-btn mm-btn-coop" id="mm-coop" name="coopBtn">🤝 &nbsp;Co-op Mode</button>
+        <button class="mm-btn" id="mm-leaderboard" name="leaderboardBtn">🏆 &nbsp;Leaderboard</button>
+        <button class="mm-btn" id="mm-settings" name="settingsBtn">⚙️ &nbsp;Settings</button>
+        <button class="mm-btn" id="mm-credits" name="creditsBtn">📜 &nbsp;Credits</button>
       </nav>
     </div>
 
@@ -180,22 +180,22 @@
 
       <div class="mm-setting-row">
         <label>Master Volume</label>
-        <input type="range" id="s-master" min="0" max="100" value="80" />
+        <input type="range" id="s-master" name="masterVolume" min="0" max="100" value="80" />
         <span class="mm-val" id="sv-master">80</span>
       </div>
       <div class="mm-setting-row">
         <label>Music Volume</label>
-        <input type="range" id="s-music" min="0" max="100" value="60" />
+        <input type="range" id="s-music" name="musicVolume" min="0" max="100" value="60" />
         <span class="mm-val" id="sv-music">60</span>
       </div>
       <div class="mm-setting-row">
         <label>SFX Volume</label>
-        <input type="range" id="s-sfx" min="0" max="100" value="80" />
+        <input type="range" id="s-sfx" name="sfxVolume" min="0" max="100" value="80" />
         <span class="mm-val" id="sv-sfx">80</span>
       </div>
       <div class="mm-setting-row">
         <label>Graphics Quality</label>
-        <select id="s-quality">
+        <select id="s-quality" name="graphicsQuality">
           <option value="low">Low</option>
           <option value="medium" selected>Medium</option>
           <option value="high">High</option>
@@ -212,6 +212,7 @@
         <p class="mm-credit-line">🌊 Built with <strong>Three.js r169</strong></p>
         <p class="mm-credit-line">⛰️ 3-D Assets: <strong>Kenney Pirate Kit</strong></p>
         <p class="mm-credit-line">🎨 UI Font: <strong>Pirata One (Google Fonts)</strong></p>
+        <p class="mm-credit-line">🔗 <a id="github-link" class="mm-credit-link" href="https://github.com/PrajwalTheCoder/Pirate-Empire" target="_blank" rel="noopener">GitHub Project Repository</a></p>
         <p class="mm-credit-line mm-credit-tagline">
           “Every legend begins with a single voyage.”
         </p>
@@ -247,10 +248,10 @@
       <!-- JOIN pane -->
       <div class="coop-pane hidden" id="coop-pane-join">
         <p class="coop-hint">Enter your captain's room code:</p>
-        <input class="coop-code-input" id="coop-join-input" type="text"
+        <input class="coop-code-input" id="coop-join-input" name="roomCode" type="text"
                placeholder="e.g. PX7K2M" maxlength="6" autocomplete="off"
                spellcheck="false" />
-        <button class="mm-btn mm-btn-play" id="coop-join-btn" style="margin-top:14px;">🔗 &nbsp;Join Ship</button>
+        <button class="mm-btn mm-btn-play" id="coop-join-btn" name="joinShipBtn" style="margin-top:14px;">🔗 &nbsp;Join Ship</button>
         <div class="coop-status" id="coop-join-status"></div>
       </div>
     </div>
@@ -262,7 +263,7 @@
       <div class="leaderboard-body">
         <div class="leaderboard-controls">
           <div class="leaderboard-search-container">
-            <input type="text" id="leaderboard-search-input" placeholder="🔍 Search captain's name..." maxlength="20" autocomplete="off" spellcheck="false" />
+            <input type="text" id="leaderboard-search-input" name="searchCaptain" placeholder="🔍 Search captain's name..." maxlength="20" autocomplete="off" spellcheck="false" />
           </div>
           <div id="leaderboard-my-standing" class="leaderboard-my-standing hidden">
             <span class="my-standing-label">🏴‍☠️ Your Standing:</span>
